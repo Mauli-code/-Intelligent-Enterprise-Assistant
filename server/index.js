@@ -1,5 +1,7 @@
+import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -28,9 +30,36 @@ app.post("/api/chat", (request, response) => {
     });
   }
 
-  return response.json({
-    reply: `Thanks for your message: "${message}". This is a hardcoded Day 1 response.`,
-  });
+  if (!process.env.GEMINI_API_KEY) {
+    return response.status(503).json({
+      error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
+    });
+  }
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+  return ai.models
+    .generateContent({
+      model: "gemini-2.5-flash",
+      contents: message,
+    })
+    .then((result) => {
+      const reply = result.text?.trim();
+
+      if (!reply) {
+        return response
+          .status(502)
+          .json({ error: "The AI service returned an empty response." });
+      }
+
+      return response.json({ reply });
+    })
+    .catch(() => {
+      console.error("Gemini request failed.");
+      return response
+        .status(502)
+        .json({ error: "The AI service could not generate a response." });
+    });
 });
 
 app.use((_request, response) => {
