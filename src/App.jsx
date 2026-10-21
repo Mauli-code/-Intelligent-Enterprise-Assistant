@@ -1,6 +1,7 @@
 import { useState } from "react";
 
-const apiUrl = "http://localhost:3001/api/chat";
+const apiUrl =
+  import.meta.env.VITE_API_URL || "http://localhost:3001/api/chat";
 
 function App() {
   const [message, setMessage] = useState("");
