@@ -75,6 +75,14 @@ app.use((error, _request, response, _next) => {
   return response.status(500).json({ error: "An unexpected server error occurred." });
 });
 
-app.listen(port, () => {
-  console.log(`API server listening on http://localhost:${port}`);
-});
+export function startServer() {
+  return app.listen(port, () => {
+    console.log(`API server listening on http://localhost:${port}`);
+  });
+}
+
+if (process.env.NODE_ENV !== "test") {
+  startServer();
+}
+
+export { app };

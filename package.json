@@ -6,7 +6,8 @@
   "scripts": {
     "client": "vite",
     "server": "node server/index.js",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "NODE_ENV=test node --test"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
