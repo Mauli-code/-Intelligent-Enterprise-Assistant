@@ -71,6 +71,12 @@ app.use((error, _request, response, _next) => {
     return response.status(400).json({ error: "Request body must be valid JSON." });
   }
 
+  if (error.type === "entity.too.large") {
+    return response
+      .status(413)
+      .json({ error: "Request body must be 10 KB or smaller." });
+  }
+
   console.error(error);
   return response.status(500).json({ error: "An unexpected server error occurred." });
 });

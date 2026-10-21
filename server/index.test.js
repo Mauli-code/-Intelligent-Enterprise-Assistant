@@ -90,6 +90,19 @@ test("returns JSON for malformed request bodies", async () => {
   });
 });
 
+test("rejects request bodies over the JSON size limit", async () => {
+  const response = await request("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "a".repeat(11000) }),
+  });
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), {
+    error: "Request body must be 10 KB or smaller.",
+  });
+});
+
 test("returns a JSON 404 for unknown routes", async () => {
   const response = await request("/api/unknown");
 
