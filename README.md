@@ -19,6 +19,8 @@ intentionally simple and suitable for learning full-stack request handling.
 - JSON error responses for invalid requests, missing configuration, and
   oversized request bodies.
 - Persistent local conversation history backed by SQLite.
+- Demonstration HR, IT-support, and company-events knowledge with source
+  references.
 
 ## Technology stack
 
@@ -39,6 +41,7 @@ intentionally simple and suitable for learning full-stack request handling.
 │   ├── index.js       # Express API and Gemini integration
 │   ├── database.js     # SQLite schema and conversation queries
 │   └── index.test.js  # Backend API and validation tests
+├── knowledge/          # Clearly labeled demonstration documents
 ├── src/
 │   ├── App.jsx        # React chat interface
 │   ├── main.jsx       # React entry point
@@ -87,6 +90,11 @@ The conversation database is created automatically at
 conversation titles and messages for this local prototype and has no
 authentication or multi-user access control.
 
+The files in `knowledge/` are demonstration data only. They are not official
+GAIL policies, calendars, or IT procedures. The assistant names relevant
+source files in its response and recommends checking official internal sources
+when the demonstration knowledge base does not contain an answer.
+
 ## Run the application
 
 Use two terminals from the project directory.
@@ -129,15 +137,18 @@ curl -X POST http://localhost:3001/api/chat \
   -d '{"message":"Explain enterprise AI in one sentence."}'
 ```
 
-Upload a PDF for extraction and summarization:
+Upload a PDF for extraction and summarization from an existing conversation:
 
 ```bash
 curl -X POST http://localhost:3001/api/documents \
-  -F "document=@sample.pdf"
+  -F "conversationId=YOUR_CONVERSATION_ID" \
+  -F "document=@knowledge/demo-employee-handbook.pdf"
 ```
 
 The upload response contains the filename, size, summary, and important
-keywords. PDF contents are processed in memory and are not stored.
+keywords. Extracted text is saved with the conversation so later chat
+questions can use the uploaded document context. Original PDF files are not
+stored.
 
 ## Tests and build
 
@@ -162,7 +173,10 @@ conversation creation and deletion, missing upload fields, and unknown routes.
 - A live Gemini response requires a valid `GEMINI_API_KEY`; automated tests do
   not call the external Gemini service.
 - Uploaded PDFs are held in memory for the request and are discarded after the
-  response.
+  response. Extracted text is retained in the local SQLite database for
+  follow-up questions and should be treated as local prototype data.
+- `knowledge/demo-employee-handbook.pdf` is an eight-page demonstration PDF,
+  not an official GAIL document.
 - This local database has no authentication, so it is suitable only for one
   local user. It should not be exposed as a shared service.
 - There is no multi-agent workflow.

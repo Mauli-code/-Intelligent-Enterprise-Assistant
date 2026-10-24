@@ -28,6 +28,15 @@ database.exec(`
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS uploaded_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    extracted_text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+  );
+
   CREATE INDEX IF NOT EXISTS messages_conversation_id_idx
     ON messages (conversation_id, created_at, id);
 `);
@@ -106,6 +115,30 @@ export function deleteConversation(id) {
   return database
     .prepare("DELETE FROM conversations WHERE id = ?")
     .run(id).changes > 0;
+}
+
+export function saveDocument(conversationId, filename, extractedText) {
+  const result = database
+    .prepare(
+      `INSERT INTO uploaded_documents
+       (conversation_id, filename, extracted_text, created_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(conversationId, filename, extractedText, new Date().toISOString());
+
+  return result.lastInsertRowid;
+}
+
+export function getLatestDocument(conversationId) {
+  return database
+    .prepare(
+      `SELECT id, filename, extracted_text AS extractedText
+       FROM uploaded_documents
+       WHERE conversation_id = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+    )
+    .get(conversationId);
 }
 
 export function closeDatabase() {

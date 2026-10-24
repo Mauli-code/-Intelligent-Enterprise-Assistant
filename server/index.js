@@ -10,14 +10,38 @@ import {
   deleteConversation,
   getConversation,
   listConversations,
+  getLatestDocument,
+  saveDocument,
   updateConversationTitle,
 } from "./database.js";
+import { knowledgePrompt } from "./knowledge.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
 const maxMessageLength = 1000;
 const maxDocumentSize = 5 * 1024 * 1024;
 const maxExtractedTextLength = 100000;
+const aiRequestTimeoutMs = 30000;
+
+class AiRequestTimeoutError extends Error {
+  constructor() {
+    super("The AI service request timed out.");
+    this.name = "AiRequestTimeoutError";
+  }
+}
+
+function withTimeout(promise, timeoutMs = aiRequestTimeoutMs) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new AiRequestTimeoutError()),
+      timeoutMs,
+    );
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: maxDocumentSize },
@@ -112,11 +136,20 @@ app.post("/api/documents", upload.single("document"), async (request, response) 
       });
     }
 
+    const conversationId = request.body?.conversationId;
+    if (!conversationId || !getConversation(conversationId)) {
+      return response.status(400).json({
+        error: "Upload a PDF from an existing conversation.",
+      });
+    }
+
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const aiResult = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Summarize this document for a college student. Return only valid JSON with exactly two keys: "summary" (a concise paragraph) and "keywords" (an array of 5 to 10 short strings). Do not use markdown fences.\n\nDocument text:\n${text.slice(0, maxExtractedTextLength)}`,
-    });
+    const aiResult = await withTimeout(
+      ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `Summarize this document for a college student. Return only valid JSON with exactly two keys: "summary" (a concise paragraph) and "keywords" (an array of 5 to 10 short strings). Do not use markdown fences.\n\nDocument text:\n${text.slice(0, maxExtractedTextLength)}`,
+      }),
+    );
     const rawReply = aiResult.text?.trim() || "";
     const parsedReply = JSON.parse(rawReply);
 
@@ -128,13 +161,27 @@ app.post("/api/documents", upload.single("document"), async (request, response) 
       throw new Error("The AI service returned an invalid document summary.");
     }
 
+    const documentId = saveDocument(
+      conversationId,
+      request.file.originalname,
+      text.slice(0, maxExtractedTextLength),
+    );
+
     return response.json({
+      conversationId,
+      documentId,
       filename: request.file.originalname,
       size: request.file.size,
       summary: parsedReply.summary,
       keywords: parsedReply.keywords,
     });
   } catch (error) {
+    if (error instanceof AiRequestTimeoutError) {
+      return response.status(504).json({
+        error: "The AI service took too long to respond. Please try again.",
+      });
+    }
+
     if (error instanceof SyntaxError) {
       return response.status(502).json({
         error: "The AI service returned an invalid document summary.",
@@ -182,13 +229,16 @@ app.post("/api/chat", (request, response) => {
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const uploadedDocument = getLatestDocument(conversationId);
+  const knowledge = knowledgePrompt(message, uploadedDocument?.extractedText);
   addMessage(conversationId, "user", message);
 
-  return ai.models
-    .generateContent({
+  return withTimeout(
+    ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: message,
-    })
+      contents: knowledge.prompt,
+    }),
+  )
     .then((result) => {
       const reply = result.text?.trim();
 
@@ -200,9 +250,19 @@ app.post("/api/chat", (request, response) => {
 
       addMessage(conversationId, "assistant", reply);
       updateConversationTitle(conversationId, message.slice(0, 60));
-      return response.json({ conversationId, reply });
+      return response.json({
+        conversationId,
+        reply,
+        sources: knowledge.sources,
+      });
     })
-    .catch(() => {
+    .catch((error) => {
+      if (error instanceof AiRequestTimeoutError) {
+        return response.status(504).json({
+          error: "The AI service took too long to respond. Please try again.",
+        });
+      }
+
       console.error("Gemini request failed.");
       return response
         .status(502)

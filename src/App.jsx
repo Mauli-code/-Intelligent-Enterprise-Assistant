@@ -138,7 +138,11 @@ function App() {
 
       setMessages((currentMessages) => [
         ...currentMessages,
-        { role: "assistant", text: data.reply },
+        {
+          role: "assistant",
+          text: data.reply,
+          sources: data.sources || [],
+        },
       ]);
       await refreshConversations(conversationId);
     } catch (requestError) {
@@ -172,6 +176,7 @@ function App() {
     setIsPdfLoading(true);
     const formData = new FormData();
     formData.append("document", pdfFile);
+    formData.append("conversationId", conversationId);
 
     try {
       const data = await request("/documents", {
@@ -241,6 +246,9 @@ function App() {
               <div className={`message ${chatMessage.role}`} key={`${chatMessage.role}-${index}`}>
                 <span>{chatMessage.role === "user" ? "You" : "Assistant"}</span>
                 <p>{chatMessage.text}</p>
+                {chatMessage.sources?.length > 0 && (
+                  <small>Sources: {chatMessage.sources.join(", ")}</small>
+                )}
               </div>
             ))
           )}
@@ -285,6 +293,7 @@ function App() {
           {pdfSummary && (
             <div className="pdf-result">
               <h3>{pdfSummary.filename}</h3>
+              <p>Document context is attached to this conversation.</p>
               <p>{pdfSummary.summary}</p>
               <strong>Important keywords</strong>
               <ul>

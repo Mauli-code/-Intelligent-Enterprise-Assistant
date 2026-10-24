@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { app } from "./index.js";
+import { findKnowledgeSources, knowledgePrompt } from "./knowledge.js";
+import {
+  createConversation,
+  getLatestDocument,
+  saveDocument,
+} from "./database.js";
 
 let server;
 let baseUrl;
@@ -59,6 +65,24 @@ test("reports API health", async () => {
   assert.deepEqual(await response.json(), { status: "ok" });
 });
 
+test("finds demonstration HR knowledge and labels it", () => {
+  const sources = findKnowledgeSources("How do I submit a leave request?");
+  assert.deepEqual(sources.map((source) => source.name), ["demo-hr-policy.md"]);
+  assert.match(knowledgePrompt("How do I submit a leave request?").prompt, /not official GAIL policy/);
+});
+
+test("includes uploaded document context in follow-up prompts", () => {
+  const conversation = createTestConversation();
+  saveDocument(conversation.id, "handbook.pdf", "The sample handbook says orientation is on Monday.");
+  const context = getLatestDocument(conversation.id);
+  const prompt = knowledgePrompt("When is orientation?", context.extractedText);
+  assert.match(prompt.prompt, /The sample handbook says orientation is on Monday/);
+});
+
+function createTestConversation() {
+  return createConversation("Document context test");
+}
+
 test("creates, reads, and deletes a conversation", async () => {
   const createResponse = await request("/api/conversations", {
     method: "POST",
@@ -92,6 +116,15 @@ test("reports missing AI configuration after extracting PDF text", async () => {
     const response = await request("/api/documents", {
       method: "POST",
       body: pdfUpload({ content: textPdf }),
+    });
+
+    test("does not expose a Gemini key in the environment template", async () => {
+      const environmentTemplate = await import("node:fs/promises").then((fs) =>
+        fs.readFile(new URL("../.env.example", import.meta.url), "utf8"),
+      );
+
+      assert.match(environmentTemplate, /GEMINI_API_KEY=your_gemini_api_key_here/);
+      assert.doesNotMatch(environmentTemplate, /GEMINI_API_KEY=AQ\./);
     });
 
     assert.equal(response.status, 503);
