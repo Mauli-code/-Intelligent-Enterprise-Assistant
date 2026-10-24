@@ -29,6 +29,29 @@ function pdfUpload({ filename = "document.pdf", content = "%PDF-1.7" } = {}) {
   return form;
 }
 
+const textPdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 44 >>
+stream
+BT /F1 24 Tf 72 720 Td (Hello PDF) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+trailer
+<< /Root 1 0 R >>
+%%EOF`;
+
 test("reports API health", async () => {
   const response = await request("/api/health");
 
@@ -61,18 +84,28 @@ test("creates, reads, and deletes a conversation", async () => {
   assert.equal(missingResponse.status, 404);
 });
 
-test("accepts a PDF upload without exposing its contents", async () => {
-  const response = await request("/api/documents", {
-    method: "POST",
-    body: pdfUpload(),
-  });
+test("reports missing AI configuration after extracting PDF text", async () => {
+  const originalApiKey = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
 
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), {
-    filename: "document.pdf",
-    size: 8,
-    message: "PDF uploaded successfully.",
-  });
+  try {
+    const response = await request("/api/documents", {
+      method: "POST",
+      body: pdfUpload({ content: textPdf }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error:
+        "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
+    });
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.GEMINI_API_KEY;
+    } else {
+      process.env.GEMINI_API_KEY = originalApiKey;
+    }
+  }
 });
 
 test("rejects document uploads without a file", async () => {
@@ -127,6 +160,19 @@ test("rejects files that are not PDF content", async () => {
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
     error: "The uploaded file is not a readable PDF document.",
+  });
+
+  test("rejects PDF files that cannot be parsed", async () => {
+    const response = await request("/api/documents", {
+      method: "POST",
+      body: pdfUpload({ content: "%PDF-1.7" }),
+    });
+
+    assert.equal(response.status, 422);
+    assert.deepEqual(await response.json(), {
+      error:
+        "The uploaded PDF could not be read. Please provide a valid text-based PDF.",
+    });
   });
 });
 

@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import multer from "multer";
+import { PDFParse } from "pdf-parse";
 import {
   addMessage,
   createConversation,
@@ -16,6 +17,7 @@ const app = express();
 const port = Number(process.env.PORT) || 3001;
 const maxMessageLength = 1000;
 const maxDocumentSize = 5 * 1024 * 1024;
+const maxExtractedTextLength = 100000;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: maxDocumentSize },
@@ -71,7 +73,7 @@ app.delete("/api/conversations/:id", (request, response) => {
   return response.status(204).send();
 });
 
-app.post("/api/documents", upload.single("document"), (request, response) => {
+app.post("/api/documents", upload.single("document"), async (request, response) => {
   if (!request.file) {
     return response.status(400).json({ error: "Please upload a PDF document." });
   }
@@ -84,11 +86,68 @@ app.post("/api/documents", upload.single("document"), (request, response) => {
     });
   }
 
-  return response.json({
-    filename: request.file.originalname,
-    size: request.file.size,
-    message: "PDF uploaded successfully.",
-  });
+  const parser = new PDFParse({ data: request.file.buffer });
+
+  try {
+    let result;
+    try {
+      result = await parser.getText();
+    } catch {
+      return response.status(422).json({
+        error: "The uploaded PDF could not be read. Please provide a valid text-based PDF.",
+      });
+    }
+
+    const text = result.text.trim();
+
+    if (!text) {
+      return response.status(422).json({
+        error: "This PDF has no selectable text. OCR is required for scanned PDFs.",
+      });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return response.status(503).json({
+        error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
+      });
+    }
+
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const aiResult = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `Summarize this document for a college student. Return only valid JSON with exactly two keys: "summary" (a concise paragraph) and "keywords" (an array of 5 to 10 short strings). Do not use markdown fences.\n\nDocument text:\n${text.slice(0, maxExtractedTextLength)}`,
+    });
+    const rawReply = aiResult.text?.trim() || "";
+    const parsedReply = JSON.parse(rawReply);
+
+    if (
+      typeof parsedReply.summary !== "string" ||
+      !Array.isArray(parsedReply.keywords) ||
+      parsedReply.keywords.some((keyword) => typeof keyword !== "string")
+    ) {
+      throw new Error("The AI service returned an invalid document summary.");
+    }
+
+    return response.json({
+      filename: request.file.originalname,
+      size: request.file.size,
+      summary: parsedReply.summary,
+      keywords: parsedReply.keywords,
+    });
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return response.status(502).json({
+        error: "The AI service returned an invalid document summary.",
+      });
+    }
+
+    console.error("PDF processing failed.");
+    return response.status(502).json({
+      error: "The PDF could not be processed or summarized.",
+    });
+  } finally {
+    await parser.destroy();
+  }
 });
 
 app.post("/api/chat", (request, response) => {

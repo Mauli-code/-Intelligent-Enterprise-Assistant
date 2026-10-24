@@ -9,18 +9,16 @@ intentionally simple and suitable for learning full-stack request handling.
 - Text chat through Google Gemini using the official `@google/genai` SDK.
 - Backend validation for empty and oversized chat messages.
 - Loading, empty, error, and retry states in the chat interface.
-- Safe PDF upload validation:
+- PDF upload and summarization:
   - PDF extension and MIME type are required.
   - The file must begin with the PDF `%PDF-` signature.
   - Files are limited to 5 MB.
   - Uploads are kept in memory and are not saved to disk.
+  - Selectable text is extracted and summarized with Gemini.
+  - Scanned PDFs without selectable text report that OCR is required.
 - JSON error responses for invalid requests, missing configuration, and
   oversized request bodies.
 - Persistent local conversation history backed by SQLite.
-
-PDF text extraction and Gemini document summarization are not implemented yet.
-The current document endpoint validates a PDF and returns basic file metadata
-only; it does not claim to read or summarize document contents.
 
 ## Technology stack
 
@@ -28,6 +26,7 @@ only; it does not claim to read or summarize document contents.
 - Vite
 - Express
 - Multer for in-memory multipart upload handling
+- pdf-parse for PDF text extraction
 - better-sqlite3 for local conversation history
 - Google `@google/genai` SDK
 - Node.js built-in test runner
@@ -130,15 +129,15 @@ curl -X POST http://localhost:3001/api/chat \
   -d '{"message":"Explain enterprise AI in one sentence."}'
 ```
 
-Upload a PDF for validation:
+Upload a PDF for extraction and summarization:
 
 ```bash
 curl -X POST http://localhost:3001/api/documents \
   -F "document=@sample.pdf"
 ```
 
-The upload response contains the filename, size, and validation status, not
-the document contents.
+The upload response contains the filename, size, summary, and important
+keywords. PDF contents are processed in memory and are not stored.
 
 ## Tests and build
 
@@ -162,12 +161,8 @@ conversation creation and deletion, missing upload fields, and unknown routes.
 
 - A live Gemini response requires a valid `GEMINI_API_KEY`; automated tests do
   not call the external Gemini service.
-- PDF upload is validation-only. The application does not currently extract
-  PDF text or summarize uploaded documents.
 - Uploaded PDFs are held in memory for the request and are discarded after the
   response.
 - This local database has no authentication, so it is suitable only for one
   local user. It should not be exposed as a shared service.
 - There is no multi-agent workflow.
-- The frontend currently provides chat controls but does not yet include a PDF
-  upload control.

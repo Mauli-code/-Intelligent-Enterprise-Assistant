@@ -207,6 +207,42 @@ h1 {
   padding: 22px 28px 28px;
 }
 
+.pdf-form {
+  border-top: 1px solid #e5e9f2;
+  padding: 22px 28px 28px;
+}
+
+.pdf-form h2 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.pdf-form p {
+  color: #65708a;
+}
+
+.pdf-form input {
+  display: block;
+  margin-bottom: 12px;
+  max-width: 100%;
+}
+
+.pdf-result {
+  background: #f1f4f8;
+  border-radius: 12px;
+  margin-top: 18px;
+  padding: 16px;
+}
+
+.pdf-result h3 {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+
+.pdf-result ul {
+  margin-bottom: 0;
+}
+
 .message-form label {
   display: block;
   font-weight: 700;
@@ -273,6 +309,7 @@ textarea:focus {
 
   .messages,
   .message-form,
+  .pdf-form,
   .chat-header {
     padding: 20px;
   }

@@ -24,6 +24,9 @@ function App() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [error, setError] = useState("");
   const [failedMessage, setFailedMessage] = useState("");
+  const [pdfFile, setPdfFile] = useState(null);
+  const [pdfSummary, setPdfSummary] = useState(null);
+  const [isPdfLoading, setIsPdfLoading] = useState(false);
 
   async function refreshConversations(selectedId = conversationId) {
     const data = await request("/conversations");
@@ -156,6 +159,33 @@ function App() {
     setFailedMessage("");
   }
 
+  async function summarizePdf(event) {
+    event.preventDefault();
+
+    if (!pdfFile) {
+      setError("Please choose a PDF file first.");
+      return;
+    }
+
+    setError("");
+    setPdfSummary(null);
+    setIsPdfLoading(true);
+    const formData = new FormData();
+    formData.append("document", pdfFile);
+
+    try {
+      const data = await request("/documents", {
+        method: "POST",
+        body: formData,
+      });
+      setPdfSummary(data);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setIsPdfLoading(false);
+    }
+  }
+
   if (isHistoryLoading) {
     return <main className="app-shell"><p>Loading conversations...</p></main>;
   }
@@ -239,6 +269,29 @@ function App() {
             </button>
           </div>
           {error && <p className="error" role="alert">{error}</p>}
+        </form>
+
+        <form className="pdf-form" onSubmit={summarizePdf}>
+          <h2>Summarize a PDF</h2>
+          <p>Text-based PDFs are supported up to 5 MB. Scanned PDFs require OCR.</p>
+          <input
+            accept="application/pdf,.pdf"
+            onChange={(event) => setPdfFile(event.target.files?.[0] || null)}
+            type="file"
+          />
+          <button className="send-button" disabled={isPdfLoading} type="submit">
+            {isPdfLoading ? "Summarizing..." : "Upload and summarize"}
+          </button>
+          {pdfSummary && (
+            <div className="pdf-result">
+              <h3>{pdfSummary.filename}</h3>
+              <p>{pdfSummary.summary}</p>
+              <strong>Important keywords</strong>
+              <ul>
+                {pdfSummary.keywords.map((keyword) => <li key={keyword}>{keyword}</li>)}
+              </ul>
+            </div>
+          )}
         </form>
       </section>
     </main>
