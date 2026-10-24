@@ -5,7 +5,10 @@ const apiBaseUrl = import.meta.env.VITE_API_URL
   : "http://localhost:3001/api";
 
 async function request(path, options) {
-  const response = await fetch(`${apiBaseUrl}${path}`, options);
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    credentials: "include",
+  });
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
@@ -27,6 +30,10 @@ function App() {
   const [pdfFile, setPdfFile] = useState(null);
   const [pdfSummary, setPdfSummary] = useState(null);
   const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authCode, setAuthCode] = useState("");
+  const [isCodeSent, setIsCodeSent] = useState(false);
 
   async function refreshConversations(selectedId = conversationId) {
     const data = await request("/conversations");
@@ -87,6 +94,13 @@ function App() {
   }
 
   useEffect(() => {
+    request("/auth/me")
+      .then((data) => setUserEmail(data.user.email))
+      .catch(() => setUserEmail(""));
+  }, []);
+
+  useEffect(() => {
+    if (!userEmail) return undefined;
     async function loadHistory() {
       try {
         const data = await request("/conversations");
@@ -104,7 +118,37 @@ function App() {
     }
 
     loadHistory();
-  }, []);
+  }, [userEmail]);
+
+  async function requestCode(event) {
+    event.preventDefault();
+    try {
+      await request("/auth/request-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail }),
+      });
+      setIsCodeSent(true);
+      setError("A development OTP was printed in the backend terminal.");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function verifyCode(event) {
+    event.preventDefault();
+    try {
+      const data = await request("/auth/verify-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: authEmail, code: authCode }),
+      });
+      setUserEmail(data.user.email);
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
 
   async function sendMessage(event, messageToSend = message, isRetry = false) {
     event?.preventDefault();
@@ -189,6 +233,29 @@ function App() {
     } finally {
       setIsPdfLoading(false);
     }
+  }
+
+  if (!userEmail) {
+    return (
+      <main className="app-shell">
+        <section className="chat-card auth-card">
+          <h1>Verify your email</h1>
+          <p>Development mode prints the OTP in the backend terminal.</p>
+          <form onSubmit={isCodeSent ? verifyCode : requestCode}>
+            <label htmlFor="auth-email">Email</label>
+            <input id="auth-email" type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required />
+            {isCodeSent && (
+              <>
+                <label htmlFor="auth-code">Verification code</label>
+                <input id="auth-code" inputMode="numeric" value={authCode} onChange={(event) => setAuthCode(event.target.value)} required />
+              </>
+            )}
+            <button className="send-button" type="submit">{isCodeSent ? "Verify code" : "Send code"}</button>
+          </form>
+          {error && <p className="error" role="alert">{error}</p>}
+        </section>
+      </main>
+    );
   }
 
   if (isHistoryLoading) {

@@ -19,6 +19,7 @@ intentionally simple and suitable for learning full-stack request handling.
 - JSON error responses for invalid requests, missing configuration, and
   oversized request bodies.
 - Persistent local conversation history backed by SQLite.
+- Development email OTP verification with hashed, expiring codes and sessions.
 - Demonstration HR, IT-support, and company-events knowledge with source
   references.
 
@@ -76,6 +77,11 @@ Keep this file private. It is excluded by `.gitignore` and is read only by
 the backend. Do not put `GEMINI_API_KEY` in React code or in a `VITE_*`
 variable.
 
+For local development, set `AUTH_EMAIL_MODE=console`. The backend prints the
+short-lived OTP to its terminal instead of sending email. This is not
+production email delivery. Production should use a configured email provider,
+secure cookies, HTTPS, and provider-specific credentials.
+
 Optional frontend API configuration:
 
 ```env
@@ -89,6 +95,12 @@ The conversation database is created automatically at
 `server/data/assistant.db`. This local file is ignored by Git. It contains
 conversation titles and messages for this local prototype and has no
 authentication or multi-user access control.
+
+Conversations now belong to the verified email user. OTP codes are stored only
+as hashes, expire after 10 minutes, allow at most five attempts, and have a
+resend cooldown. Session tokens are stored as hashes in SQLite and sent to the
+browser through an HTTP-only cookie. This remains a local prototype: it has no
+production email provider or account-recovery workflow.
 
 The files in `knowledge/` are demonstration data only. They are not official
 GAIL policies, calendars, or IT procedures. The assistant names relevant

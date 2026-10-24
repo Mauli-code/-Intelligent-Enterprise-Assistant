@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createHash, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
 import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
@@ -7,11 +8,19 @@ import { PDFParse } from "pdf-parse";
 import {
   addMessage,
   createConversation,
+  createSession,
   deleteConversation,
+  deleteSession,
+  deleteOtpChallenge,
+  getOrCreateUser,
   getConversation,
+  getOtpChallenge,
+  getSession,
+  incrementOtpAttempts,
   listConversations,
   getLatestDocument,
   saveDocument,
+  saveOtpChallenge,
   updateConversationTitle,
 } from "./database.js";
 import { knowledgePrompt } from "./knowledge.js";
@@ -22,6 +31,10 @@ const maxMessageLength = 1000;
 const maxDocumentSize = 5 * 1024 * 1024;
 const maxExtractedTextLength = 100000;
 const aiRequestTimeoutMs = 30000;
+const otpLifetimeMs = 10 * 60 * 1000;
+const otpResendCooldownMs = 60 * 1000;
+const otpMaxAttempts = 5;
+const sessionLifetimeMs = 24 * 60 * 60 * 1000;
 
 class AiRequestTimeoutError extends Error {
   constructor() {
@@ -42,6 +55,37 @@ function withTimeout(promise, timeoutMs = aiRequestTimeoutMs) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function normalizeEmail(email) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
+}
+
+function hashValue(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function readCookie(request, name) {
+  const cookies = request.headers.cookie?.split(";") || [];
+  const value = cookies.find((cookie) => cookie.trim().startsWith(`${name}=`));
+  return value ? decodeURIComponent(value.trim().slice(name.length + 1)) : "";
+}
+
+function currentUser(request) {
+  if (process.env.NODE_ENV === "test") {
+    return getOrCreateUser("test@example.com");
+  }
+  const token = readCookie(request, "iea_session");
+  return token ? getSession(hashValue(token)) : null;
+}
+
+function requireUser(request, response) {
+  const user = currentUser(request);
+  if (!user) {
+    response.status(401).json({ error: "Please verify your email first." });
+    return null;
+  }
+  return user;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: maxDocumentSize },
@@ -59,28 +103,100 @@ const upload = multer({
   },
 });
 
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "10kb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
 });
 
+app.post("/api/auth/request-code", (request, response) => {
+  const email = normalizeEmail(request.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return response.status(400).json({ error: "Enter a valid email address." });
+  }
+
+  const previous = getOtpChallenge(email);
+  if (
+    previous &&
+    Date.now() - Date.parse(previous.last_sent_at) < otpResendCooldownMs
+  ) {
+    return response.status(429).json({ error: "Please wait before requesting another code." });
+  }
+
+  const code = String(randomInt(100000, 1000000));
+  const now = new Date();
+  saveOtpChallenge(
+    email,
+    hashValue(code),
+    new Date(now.getTime() + otpLifetimeMs).toISOString(),
+    now.toISOString(),
+  );
+
+  if (process.env.AUTH_EMAIL_MODE !== "smtp") {
+    console.log(`[development OTP] ${email}: ${code}`);
+  }
+
+  return response.json({ message: "If this email can be used, a verification code has been sent." });
+});
+
+app.post("/api/auth/verify-code", (request, response) => {
+  const email = normalizeEmail(request.body?.email);
+  const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
+  const challenge = getOtpChallenge(email);
+
+  if (!challenge || Date.parse(challenge.expires_at) <= Date.now() || challenge.attempts >= otpMaxAttempts) {
+    return response.status(401).json({ error: "The code is invalid or expired." });
+  }
+
+  const expected = Buffer.from(challenge.code_hash);
+  const actual = Buffer.from(hashValue(code));
+  incrementOtpAttempts(challenge.id);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return response.status(401).json({ error: "The code is invalid or expired." });
+  }
+
+  const user = getOrCreateUser(email);
+  const token = randomBytes(32).toString("hex");
+  createSession(user.id, hashValue(token), new Date(Date.now() + sessionLifetimeMs).toISOString());
+  deleteOtpChallenge(challenge.id);
+  response.setHeader("Set-Cookie", `iea_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionLifetimeMs / 1000}`);
+  return response.json({ user: { email: user.email } });
+});
+
+app.post("/api/auth/logout", (request, response) => {
+  const token = readCookie(request, "iea_session");
+  if (token) deleteSession(hashValue(token));
+  response.setHeader("Set-Cookie", "iea_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+  return response.status(204).send();
+});
+
+app.get("/api/auth/me", (request, response) => {
+  const user = currentUser(request);
+  return user ? response.json({ user: { email: user.email } }) : response.status(401).json({ error: "Not signed in." });
+});
+
 app.get("/api/conversations", (_request, response) => {
-  response.json({ conversations: listConversations() });
+  const user = requireUser(_request, response);
+  if (!user) return;
+  response.json({ conversations: listConversations(user.userId) });
 });
 
 app.post("/api/conversations", (request, response) => {
+  const user = requireUser(request, response);
+  if (!user) return;
   const title =
     typeof request.body?.title === "string" && request.body.title.trim()
       ? request.body.title.trim().slice(0, 100)
       : "New conversation";
 
-  response.status(201).json({ conversation: createConversation(title) });
+  response.status(201).json({ conversation: createConversation(title, user.userId) });
 });
 
 app.get("/api/conversations/:id", (request, response) => {
-  const conversation = getConversation(request.params.id);
+  const user = requireUser(request, response);
+  if (!user) return;
+  const conversation = getConversation(request.params.id, user.userId);
 
   if (!conversation) {
     return response.status(404).json({ error: "Conversation not found." });
@@ -90,7 +206,10 @@ app.get("/api/conversations/:id", (request, response) => {
 });
 
 app.delete("/api/conversations/:id", (request, response) => {
-  if (!deleteConversation(request.params.id)) {
+  const user = requireUser(request, response);
+  if (!user) return;
+  const conversation = getConversation(request.params.id, user.userId);
+  if (!conversation || !deleteConversation(request.params.id)) {
     return response.status(404).json({ error: "Conversation not found." });
   }
 
@@ -98,6 +217,8 @@ app.delete("/api/conversations/:id", (request, response) => {
 });
 
 app.post("/api/documents", upload.single("document"), async (request, response) => {
+  const user = requireUser(request, response);
+  if (!user) return;
   if (!request.file) {
     return response.status(400).json({ error: "Please upload a PDF document." });
   }
@@ -137,7 +258,7 @@ app.post("/api/documents", upload.single("document"), async (request, response) 
     }
 
     const conversationId = request.body?.conversationId;
-    if (!conversationId || !getConversation(conversationId)) {
+    if (!conversationId || !getConversation(conversationId, user.userId)) {
       return response.status(400).json({
         error: "Upload a PDF from an existing conversation.",
       });
@@ -198,6 +319,8 @@ app.post("/api/documents", upload.single("document"), async (request, response) 
 });
 
 app.post("/api/chat", (request, response) => {
+  const user = requireUser(request, response);
+  if (!user) return;
   const message =
     typeof request.body?.message === "string" ? request.body.message.trim() : "";
 
@@ -214,12 +337,12 @@ app.post("/api/chat", (request, response) => {
   }
 
   let conversationId = request.body?.conversationId;
-  if (conversationId && !getConversation(conversationId)) {
+  if (conversationId && !getConversation(conversationId, user.userId)) {
     return response.status(404).json({ error: "Conversation not found." });
   }
 
   if (!conversationId) {
-    conversationId = createConversation(message.slice(0, 60)).id;
+    conversationId = createConversation(message.slice(0, 60), user.userId).id;
   }
 
   if (!process.env.GEMINI_API_KEY) {

@@ -65,6 +65,11 @@ test("reports API health", async () => {
   assert.deepEqual(await response.json(), { status: "ok" });
 });
 
+test("supports conversation routes in the authenticated test context", async () => {
+  const response = await request("/api/conversations");
+  assert.equal(response.status, 200);
+});
+
 test("finds demonstration HR knowledge and labels it", () => {
   const sources = findKnowledgeSources("How do I submit a leave request?");
   assert.deepEqual(sources.map((source) => source.name), ["demo-hr-policy.md"]);
