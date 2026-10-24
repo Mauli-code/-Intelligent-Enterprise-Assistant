@@ -150,6 +150,18 @@ function App() {
     }
   }
 
+  async function logout() {
+    try {
+      await request("/auth/logout", { method: "POST" });
+      setUserEmail("");
+      setConversations([]);
+      setConversationId("");
+      setMessages([]);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   async function sendMessage(event, messageToSend = message, isRetry = false) {
     event?.preventDefault();
     const trimmedMessage = messageToSend.trim();
@@ -299,10 +311,16 @@ function App() {
           <div>
             <h1>Intelligent Enterprise Assistant</h1>
             <p className="subtitle">Ask a question to start a conversation.</p>
+            <p className="account-status">Signed in as {userEmail}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={clearChat}>
-            Clear chat
-          </button>
+          <div className="header-actions">
+            <button className="secondary-button" type="button" onClick={clearChat}>
+              Clear chat
+            </button>
+            <button className="secondary-button" type="button" onClick={logout}>
+              Sign out
+            </button>
+          </div>
         </header>
 
         <div className="messages" aria-live="polite">
@@ -348,7 +366,10 @@ function App() {
 
         <form className="pdf-form" onSubmit={summarizePdf}>
           <h2>Summarize a PDF</h2>
-          <p>Text-based PDFs are supported up to 5 MB. Scanned PDFs require OCR.</p>
+          <p>
+            Demonstration feature: text-based PDFs up to 5 MB are summarized by
+            Gemini. Scanned PDFs require OCR.
+          </p>
           <input
             accept="application/pdf,.pdf"
             onChange={(event) => setPdfFile(event.target.files?.[0] || null)}

@@ -126,6 +126,18 @@ textarea {
   padding: 28px;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-status {
+  color: #d9defd;
+  font-size: 0.85rem;
+  margin: 10px 0 0;
+}
+
 .eyebrow {
   font-size: 0.75rem;
   letter-spacing: 0.12em;
@@ -258,6 +270,28 @@ textarea {
   width: 100%;
 }
 
+input[type="email"],
+input[inputmode="numeric"] {
+  border: 1px solid #c8d0df;
+  border-radius: 10px;
+  margin: 6px 0 14px;
+  padding: 12px;
+  width: 100%;
+}
+
+.auth-card {
+  max-width: 480px;
+  padding: 28px;
+}
+
+.auth-card h1 {
+  margin-bottom: 10px;
+}
+
+.auth-card p {
+  color: #65708a;
+}
+
 textarea:focus {
   border-color: #3546a5;
   outline: 3px solid #3546a533;
@@ -303,8 +337,12 @@ textarea:focus {
     display: block;
   }
 
-  .secondary-button {
+  .header-actions {
     margin-top: 18px;
+  }
+
+  .secondary-button {
+    margin-top: 0;
   }
 
   .messages,

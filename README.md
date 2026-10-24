@@ -132,6 +132,16 @@ npm run client
 
 Open the local URL printed by Vite, usually `http://localhost:5173`.
 
+For the current local authentication demo:
+
+1. Enter an email address in the browser.
+2. Click **Send code**.
+3. Look at the backend terminal for the line beginning with
+   `[development OTP]`.
+4. Enter the six-digit code in the browser.
+5. Use the history sidebar, chat, and PDF controls after verification.
+6. Use **Sign out** to clear the session cookie.
+
 ## API and manual checks
 
 Check backend health:
@@ -181,9 +191,30 @@ Create a production frontend build:
 npm run build
 ```
 
+Run the repeatable five-user local concurrency test:
+
+```bash
+npm run load-test
+```
+
+The load test sends 10 conversation-list requests for each of five parallel
+users against a temporary SQLite database. It reports total requests,
+successful and failed requests, average latency, p95 latency, and requests
+over five seconds. It does not call Gemini, so it measures local API and
+database behavior rather than external provider latency.
+
 The test suite covers health checks, chat validation, missing Gemini
 configuration, malformed and oversized JSON, PDF type/signature/size checks,
 conversation creation and deletion, missing upload fields, and unknown routes.
+
+The concurrency measurement is separate from the functional test suite:
+
+```bash
+npm run load-test
+```
+
+It measures local API/database requests only. It does not prove that an
+external Gemini or email provider will respond within five seconds.
 
 ## Known limitations
 
@@ -194,6 +225,7 @@ conversation creation and deletion, missing upload fields, and unknown routes.
   follow-up questions and should be treated as local prototype data.
 - `knowledge/demo-employee-handbook.pdf` is an eight-page demonstration PDF,
   not an official GAIL document.
-- This local database has no authentication, so it is suitable only for one
-  local user. It should not be exposed as a shared service.
+- The current development OTP/session flow is suitable for a local prototype,
+  but it is not a production email deployment.
+- Hugging Face is not integrated. The current AI provider is Gemini.
 - There is no multi-agent workflow.
