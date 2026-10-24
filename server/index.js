@@ -111,6 +111,15 @@ app.use((error, _request, response, _next) => {
     });
   }
 
+  if (
+    error instanceof multer.MulterError &&
+    error.code === "LIMIT_UNEXPECTED_FILE"
+  ) {
+    return response.status(400).json({
+      error: 'Upload the PDF using the "document" field.',
+    });
+  }
+
   if (error.code === "UNSUPPORTED_FILE_TYPE") {
     return response.status(400).json({ error: error.message });
   }

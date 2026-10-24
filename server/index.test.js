@@ -62,6 +62,25 @@ test("rejects document uploads without a file", async () => {
   });
 });
 
+test("rejects document uploads with the wrong field name", async () => {
+  const form = new FormData();
+  form.append(
+    "wrong",
+    new Blob(["%PDF-1.7"], { type: "application/pdf" }),
+    "document.pdf",
+  );
+
+  const response = await request("/api/documents", {
+    method: "POST",
+    body: form,
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: 'Upload the PDF using the "document" field.',
+  });
+});
+
 test("rejects non-PDF document uploads", async () => {
   const response = await request("/api/documents", {
     method: "POST",
