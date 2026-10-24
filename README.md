@@ -1,8 +1,8 @@
 # Intelligent Enterprise Assistant
 
-A small React and Express application for chatting with Google Gemini and
-validating PDF uploads. The project is intentionally simple and suitable for
-learning full-stack request handling.
+A small React and Express application for chatting with Google Gemini,
+validating PDF uploads, and storing local conversation history. The project is
+intentionally simple and suitable for learning full-stack request handling.
 
 ## Current features
 
@@ -16,6 +16,7 @@ learning full-stack request handling.
   - Uploads are kept in memory and are not saved to disk.
 - JSON error responses for invalid requests, missing configuration, and
   oversized request bodies.
+- Persistent local conversation history backed by SQLite.
 
 PDF text extraction and Gemini document summarization are not implemented yet.
 The current document endpoint validates a PDF and returns basic file metadata
@@ -27,6 +28,7 @@ only; it does not claim to read or summarize document contents.
 - Vite
 - Express
 - Multer for in-memory multipart upload handling
+- better-sqlite3 for local conversation history
 - Google `@google/genai` SDK
 - Node.js built-in test runner
 
@@ -36,6 +38,7 @@ only; it does not claim to read or summarize document contents.
 .
 ├── server/
 │   ├── index.js       # Express API and Gemini integration
+│   ├── database.js     # SQLite schema and conversation queries
 │   └── index.test.js  # Backend API and validation tests
 ├── src/
 │   ├── App.jsx        # React chat interface
@@ -79,6 +82,11 @@ VITE_API_URL=http://localhost:3001/api/chat
 
 `VITE_API_URL` is optional and defaults to the value above. The document
 endpoint is currently at `http://localhost:3001/api/documents`.
+
+The conversation database is created automatically at
+`server/data/assistant.db`. This local file is ignored by Git. It contains
+conversation titles and messages for this local prototype and has no
+authentication or multi-user access control.
 
 ## Run the application
 
@@ -148,7 +156,7 @@ npm run build
 
 The test suite covers health checks, chat validation, missing Gemini
 configuration, malformed and oversized JSON, PDF type/signature/size checks,
-missing upload fields, and unknown routes.
+conversation creation and deletion, missing upload fields, and unknown routes.
 
 ## Known limitations
 
@@ -158,7 +166,8 @@ missing upload fields, and unknown routes.
   PDF text or summarize uploaded documents.
 - Uploaded PDFs are held in memory for the request and are discarded after the
   response.
-- There is no database, authentication, document history, or multi-agent
-  workflow.
+- This local database has no authentication, so it is suitable only for one
+  local user. It should not be exposed as a shared service.
+- There is no multi-agent workflow.
 - The frontend currently provides chat controls but does not yet include a PDF
   upload control.

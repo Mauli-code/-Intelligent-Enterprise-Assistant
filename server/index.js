@@ -3,6 +3,14 @@ import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import multer from "multer";
+import {
+  addMessage,
+  createConversation,
+  deleteConversation,
+  getConversation,
+  listConversations,
+  updateConversationTitle,
+} from "./database.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -30,6 +38,37 @@ app.use(express.json({ limit: "10kb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
+});
+
+app.get("/api/conversations", (_request, response) => {
+  response.json({ conversations: listConversations() });
+});
+
+app.post("/api/conversations", (request, response) => {
+  const title =
+    typeof request.body?.title === "string" && request.body.title.trim()
+      ? request.body.title.trim().slice(0, 100)
+      : "New conversation";
+
+  response.status(201).json({ conversation: createConversation(title) });
+});
+
+app.get("/api/conversations/:id", (request, response) => {
+  const conversation = getConversation(request.params.id);
+
+  if (!conversation) {
+    return response.status(404).json({ error: "Conversation not found." });
+  }
+
+  return response.json({ conversation });
+});
+
+app.delete("/api/conversations/:id", (request, response) => {
+  if (!deleteConversation(request.params.id)) {
+    return response.status(404).json({ error: "Conversation not found." });
+  }
+
+  return response.status(204).send();
 });
 
 app.post("/api/documents", upload.single("document"), (request, response) => {
@@ -68,6 +107,15 @@ app.post("/api/chat", (request, response) => {
     });
   }
 
+  let conversationId = request.body?.conversationId;
+  if (conversationId && !getConversation(conversationId)) {
+    return response.status(404).json({ error: "Conversation not found." });
+  }
+
+  if (!conversationId) {
+    conversationId = createConversation(message.slice(0, 60)).id;
+  }
+
   if (!process.env.GEMINI_API_KEY) {
     return response.status(503).json({
       error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
@@ -75,6 +123,7 @@ app.post("/api/chat", (request, response) => {
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  addMessage(conversationId, "user", message);
 
   return ai.models
     .generateContent({
@@ -90,7 +139,9 @@ app.post("/api/chat", (request, response) => {
           .json({ error: "The AI service returned an empty response." });
       }
 
-      return response.json({ reply });
+      addMessage(conversationId, "assistant", reply);
+      updateConversationTitle(conversationId, message.slice(0, 60));
+      return response.json({ conversationId, reply });
     })
     .catch(() => {
       console.error("Gemini request failed.");

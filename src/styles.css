@@ -21,8 +21,88 @@ textarea {
 .app-shell {
   align-items: center;
   display: flex;
+  gap: 20px;
   min-height: 100vh;
   padding: 24px;
+}
+
+.history-panel {
+  align-self: stretch;
+  background: #fff;
+  border: 1px solid #dbe3f0;
+  border-radius: 20px;
+  max-width: 260px;
+  padding: 20px;
+  width: 100%;
+}
+
+.history-header {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.history-header h2 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.new-chat-button,
+.delete-button {
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 7px 9px;
+}
+
+.new-chat-button {
+  background: #3546a5;
+  color: #fff;
+}
+
+.history-empty {
+  color: #65708a;
+  font-size: 0.9rem;
+}
+
+.conversation-list {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.conversation-list li {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 4px;
+}
+
+.conversation-list li.selected {
+  background: #e9edff;
+}
+
+.conversation-list li > button:first-child {
+  background: transparent;
+  border: 0;
+  color: #172033;
+  cursor: pointer;
+  overflow: hidden;
+  padding: 7px 4px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.delete-button {
+  background: transparent;
+  color: #b42318;
+  flex-shrink: 0;
 }
 
 .chat-card {
@@ -173,7 +253,14 @@ textarea:focus {
 
 @media (max-width: 560px) {
   .app-shell {
+    align-items: stretch;
+    display: block;
     padding: 12px;
+  }
+
+  .history-panel {
+    margin-bottom: 12px;
+    max-width: none;
   }
 
   .chat-header {

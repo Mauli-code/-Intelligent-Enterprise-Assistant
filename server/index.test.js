@@ -36,6 +36,31 @@ test("reports API health", async () => {
   assert.deepEqual(await response.json(), { status: "ok" });
 });
 
+test("creates, reads, and deletes a conversation", async () => {
+  const createResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Test conversation" }),
+  });
+
+  assert.equal(createResponse.status, 201);
+  const { conversation } = await createResponse.json();
+  assert.equal(conversation.title, "Test conversation");
+  assert.deepEqual(conversation.messages, []);
+
+  const readResponse = await request(`/api/conversations/${conversation.id}`);
+  assert.equal(readResponse.status, 200);
+  assert.equal((await readResponse.json()).conversation.id, conversation.id);
+
+  const deleteResponse = await request(`/api/conversations/${conversation.id}`, {
+    method: "DELETE",
+  });
+  assert.equal(deleteResponse.status, 204);
+
+  const missingResponse = await request(`/api/conversations/${conversation.id}`);
+  assert.equal(missingResponse.status, 404);
+});
+
 test("accepts a PDF upload without exposing its contents", async () => {
   const response = await request("/api/documents", {
     method: "POST",
