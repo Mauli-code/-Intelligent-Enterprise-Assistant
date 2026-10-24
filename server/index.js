@@ -25,6 +25,11 @@ import {
 } from "./database.js";
 import { knowledgePrompt } from "./knowledge.js";
 import { moderateMessage } from "./moderation.js";
+import {
+  EmailConfigurationError,
+  EmailDeliveryError,
+  sendOtpEmail,
+} from "./email.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -108,7 +113,7 @@ app.get("/api/health", (_request, response) => {
   response.json({ status: "ok" });
 });
 
-app.post("/api/auth/request-code", (request, response) => {
+app.post("/api/auth/request-code", async (request, response) => {
   const email = normalizeEmail(request.body?.email);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return response.status(400).json({ error: "Enter a valid email address." });
@@ -131,11 +136,36 @@ app.post("/api/auth/request-code", (request, response) => {
     now.toISOString(),
   );
 
-  if (process.env.AUTH_EMAIL_MODE !== "smtp") {
-    console.log(`[development OTP] ${email}: ${code}`);
+  try {
+    const delivery = await sendOtpEmail(email, code);
+    if (!delivery.accepted) {
+      return response.status(503).json({
+        error: "Email delivery is not configured. Set AUTH_EMAIL_MODE=smtp to send verification emails.",
+      });
+    }
+  } catch (error) {
+    deleteOtpChallenge(getOtpChallenge(email)?.id);
+    if (error instanceof EmailConfigurationError) {
+      return response.status(503).json({
+        error: "Email delivery is not configured. Check the backend email settings.",
+      });
+    }
+
+    if (error instanceof EmailDeliveryError) {
+      return response.status(502).json({
+        error: "The verification email could not be delivered. Please try again later.",
+      });
+    }
+
+    console.error("Unexpected OTP email delivery failure.");
+    return response.status(502).json({
+      error: "The verification email could not be delivered. Please try again later.",
+    });
   }
 
-  return response.json({ message: "If this email can be used, a verification code has been sent." });
+  return response.json({
+    message: "If this email can be used, a verification code has been sent.",
+  });
 });
 
 app.post("/api/auth/verify-code", (request, response) => {

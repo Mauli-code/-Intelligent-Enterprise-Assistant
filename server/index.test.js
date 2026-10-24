@@ -4,6 +4,10 @@ import { app } from "./index.js";
 import { findKnowledgeSources, knowledgePrompt } from "./knowledge.js";
 import { findBlockedTerm, moderateMessage } from "./moderation.js";
 import {
+  resetEmailTransportForTests,
+  setEmailTransportForTests,
+} from "./email.js";
+import {
   createConversation,
   getLatestDocument,
   saveDocument,
@@ -12,16 +16,34 @@ import {
 let server;
 let baseUrl;
 let authCookie;
+const sentCodes = new Map();
+const testRunId = `${Date.now()}-${process.pid}`;
+const testEmail = (name) => `${name}-${testRunId}@example.com`;
 
 test.before(async () => {
+  process.env.AUTH_EMAIL_MODE = "smtp";
+  process.env.SMTP_HOST = "smtp.test";
+  process.env.SMTP_PORT = "587";
+  process.env.SMTP_SECURE = "false";
+  process.env.SMTP_USER = "test-user";
+  process.env.SMTP_PASSWORD = "test-password";
+  process.env.SMTP_FROM = "assistant@example.test";
+  setEmailTransportForTests({
+    async sendMail({ to, text }) {
+      const code = text.match(/code is (\d{6})/)?.[1];
+      sentCodes.set(to, code);
+      return { accepted: [to] };
+    },
+  });
   server = app.listen(0);
   const { port } = server.address();
   baseUrl = `http://127.0.0.1:${port}`;
-  authCookie = await loginUser("primary@example.com");
+  authCookie = await loginUser(testEmail("primary"));
 });
 
 test.after(() => {
   server.close();
+  resetEmailTransportForTests();
 });
 
 async function request(path, options) {
@@ -33,25 +55,13 @@ async function request(path, options) {
 }
 
 async function loginUser(email) {
-  let otp;
-  const originalLog = console.log;
-  console.log = (line, ...args) => {
-    const match = String(line).match(/^\[development OTP\] .*: (\d{6})$/);
-    if (match) otp = match[1];
-    originalLog(line, ...args);
-  };
-
-  try {
-    const requestCodeResponse = await requestWithoutAuth("/api/auth/request-code", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    assert.equal(requestCodeResponse.status, 200);
-  } finally {
-    console.log = originalLog;
-  }
-
+  const requestCodeResponse = await requestWithoutAuth("/api/auth/request-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  assert.equal(requestCodeResponse.status, 200);
+  const otp = sentCodes.get(email);
   assert.match(otp, /^\d{6}$/);
   const verifyResponse = await requestWithoutAuth("/api/auth/verify-code", {
     method: "POST",
@@ -117,34 +127,112 @@ test("rejects protected requests without a verified session", async () => {
   });
 });
 
-test("enforces OTP resend cooldown and attempt limits", async () => {
-  const email = "otp-limits@example.com";
-  let otp;
-  const originalLog = console.log;
-  console.log = (line, ...args) => {
-    const match = String(line).match(/^\[development OTP\] .*: (\d{6})$/);
-    if (match) otp = match[1];
-    originalLog(line, ...args);
-  };
+test("accepts an OTP email only after the mocked SMTP server accepts it", async () => {
+  const email = testEmail("delivery-success");
+  const response = await requestWithoutAuth("/api/auth/request-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(sentCodes.get(email), /^\d{6}$/);
+});
+
+test("returns a safe error when SMTP configuration is missing", async () => {
+  const originalHost = process.env.SMTP_HOST;
+  delete process.env.SMTP_HOST;
 
   try {
-    const first = await requestWithoutAuth("/api/auth/request-code", {
+    const response = await requestWithoutAuth("/api/auth/request-code", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email: testEmail("missing-smtp") }),
     });
-    assert.equal(first.status, 200);
 
-    const cooldown = await requestWithoutAuth("/api/auth/request-code", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email }),
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: "Email delivery is not configured. Check the backend email settings.",
     });
-    assert.equal(cooldown.status, 429);
   } finally {
-    console.log = originalLog;
+    process.env.SMTP_HOST = originalHost;
   }
+});
 
+test("returns a safe error when SMTP rejects the message", async () => {
+  setEmailTransportForTests({
+    async sendMail() {
+      throw new Error("private SMTP failure");
+    },
+  });
+
+  try {
+    const response = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: testEmail("rejected-smtp") }),
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      error: "The verification email could not be delivered. Please try again later.",
+    });
+  } finally {
+    setEmailTransportForTests({
+      async sendMail({ to, text }) {
+        const code = text.match(/code is (\d{6})/)?.[1];
+        sentCodes.set(to, code);
+        return { accepted: [to] };
+      },
+    });
+  }
+});
+
+test("returns a safe error when SMTP times out", async () => {
+  setEmailTransportForTests({
+    async sendMail() {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      throw new Error("private SMTP timeout");
+    },
+  });
+
+  try {
+    const response = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: testEmail("timeout-smtp") }),
+    });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      error: "The verification email could not be delivered. Please try again later.",
+    });
+  } finally {
+    setEmailTransportForTests({
+      async sendMail({ to, text }) {
+        const code = text.match(/code is (\d{6})/)?.[1];
+        sentCodes.set(to, code);
+        return { accepted: [to] };
+      },
+    });
+  }
+});
+
+test("enforces OTP resend cooldown and attempt limits", async () => {
+  const email = testEmail("otp-limits");
+  const first = await requestWithoutAuth("/api/auth/request-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  assert.equal(first.status, 200);
+  const cooldown = await requestWithoutAuth("/api/auth/request-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  assert.equal(cooldown.status, 429);
+  const otp = sentCodes.get(email);
   assert.match(otp, /^\d{6}$/);
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const response = await requestWithoutAuth("/api/auth/verify-code", {
@@ -165,7 +253,7 @@ test("enforces OTP resend cooldown and attempt limits", async () => {
 
 test("isolates conversations between verified users", async () => {
   const firstUserCookie = authCookie;
-  const secondUserCookie = await loginUser("secondary@example.com");
+  const secondUserCookie = await loginUser(testEmail("secondary"));
 
   const createResponse = await request("/api/conversations", {
     method: "POST",
@@ -183,7 +271,7 @@ test("isolates conversations between verified users", async () => {
 });
 
 test("logs out and invalidates the session", async () => {
-  const temporaryCookie = await loginUser("logout@example.com");
+  const temporaryCookie = await loginUser(testEmail("logout"));
   const logoutResponse = await requestWithoutAuth("/api/auth/logout", {
     method: "POST",
     headers: { cookie: temporaryCookie },

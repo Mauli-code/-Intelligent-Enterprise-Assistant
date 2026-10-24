@@ -34,6 +34,7 @@ function App() {
   const [authEmail, setAuthEmail] = useState("");
   const [authCode, setAuthCode] = useState("");
   const [isCodeSent, setIsCodeSent] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
 
   async function refreshConversations(selectedId = conversationId) {
     const data = await request("/conversations");
@@ -123,14 +124,16 @@ function App() {
   async function requestCode(event) {
     event.preventDefault();
     try {
-      await request("/auth/request-code", {
+      const data = await request("/auth/request-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: authEmail }),
       });
       setIsCodeSent(true);
-      setError("A development OTP was printed in the backend terminal.");
+      setAuthMessage(data.message);
+      setError("");
     } catch (requestError) {
+      setAuthMessage("");
       setError(requestError.message);
     }
   }
@@ -264,6 +267,7 @@ function App() {
             )}
             <button className="send-button" type="submit">{isCodeSent ? "Verify code" : "Send code"}</button>
           </form>
+          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
           {error && <p className="error" role="alert">{error}</p>}
         </section>
       </main>

@@ -321,6 +321,11 @@ textarea:focus {
   margin: 12px 0 0;
 }
 
+.auth-message {
+  color: #216e39;
+  margin: 12px 0 0;
+}
+
 @media (max-width: 560px) {
   .app-shell {
     align-items: stretch;

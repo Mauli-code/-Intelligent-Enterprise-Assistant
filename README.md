@@ -78,10 +78,25 @@ Keep this file private. It is excluded by `.gitignore` and is read only by
 the backend. Do not put `GEMINI_API_KEY` in React code or in a `VITE_*`
 variable.
 
-For local development, set `AUTH_EMAIL_MODE=console`. The backend prints the
-short-lived OTP to its terminal instead of sending email. This is not
-production email delivery. Production should use a configured email provider,
-secure cookies, HTTPS, and provider-specific credentials.
+For local development, use `AUTH_EMAIL_MODE=console` only to verify that email
+delivery is intentionally disabled. It does not send or print OTPs. To use
+the application, configure SMTP delivery even when testing locally:
+
+```env
+AUTH_EMAIL_MODE=smtp
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your_smtp_username
+SMTP_PASSWORD=your_smtp_password
+SMTP_FROM=assistant@example.com
+```
+
+SMTP credentials stay in the backend `.env` file and must never be committed
+or placed in React/Vite variables. The backend waits for Nodemailer to receive
+the message and reports success only when the SMTP server accepts the
+recipient. It returns a safe error for missing configuration, rejection, or
+timeout. Use a test mailbox/provider while developing.
 
 Optional frontend API configuration:
 
@@ -132,12 +147,11 @@ npm run client
 
 Open the local URL printed by Vite, usually `http://localhost:5173`.
 
-For the current local authentication demo:
+For authentication:
 
 1. Enter an email address in the browser.
 2. Click **Send code**.
-3. Look at the backend terminal for the line beginning with
-   `[development OTP]`.
+3. Open the configured mailbox and locate the verification email.
 4. Enter the six-digit code in the browser.
 5. Use the history sidebar, chat, and PDF controls after verification.
 6. Use **Sign out** to clear the session cookie.
@@ -225,7 +239,7 @@ external Gemini or email provider will respond within five seconds.
   follow-up questions and should be treated as local prototype data.
 - `knowledge/demo-employee-handbook.pdf` is an eight-page demonstration PDF,
   not an official GAIL document.
-- The current development OTP/session flow is suitable for a local prototype,
-  but it is not a production email deployment.
+- OTP delivery requires a configured SMTP provider. The `console` mode does
+  not disclose OTPs and intentionally cannot complete email authentication.
 - Hugging Face is not integrated. The current AI provider is Gemini.
 - There is no multi-agent workflow.
