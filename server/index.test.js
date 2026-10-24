@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { app } from "./index.js";
 import { findKnowledgeSources, knowledgePrompt } from "./knowledge.js";
+import { findBlockedTerm, moderateMessage } from "./moderation.js";
 import {
   createConversation,
   getLatestDocument,
@@ -68,6 +69,25 @@ test("reports API health", async () => {
 test("supports conversation routes in the authenticated test context", async () => {
   const response = await request("/api/conversations");
   assert.equal(response.status, 200);
+});
+
+test("blocks normalized bad-language terms without blocking innocent words", () => {
+  assert.equal(findBlockedTerm("That is sh!t"), "shit");
+  assert.equal(moderateMessage("This is a professional IT request.").allowed, true);
+  assert.equal(moderateMessage("That is sh!t").allowed, false);
+});
+
+test("rejects moderated chat messages before provider configuration", async () => {
+  const response = await request("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "This is sh!t" }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Please rephrase your message using respectful language.",
+  });
 });
 
 test("finds demonstration HR knowledge and labels it", () => {

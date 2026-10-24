@@ -20,6 +20,7 @@ intentionally simple and suitable for learning full-stack request handling.
   oversized request bodies.
 - Persistent local conversation history backed by SQLite.
 - Development email OTP verification with hashed, expiring codes and sessions.
+- Backend-controlled configurable bad-language filtering.
 - Demonstration HR, IT-support, and company-events knowledge with source
   references.
 
@@ -106,6 +107,10 @@ The files in `knowledge/` are demonstration data only. They are not official
 GAIL policies, calendars, or IT procedures. The assistant names relevant
 source files in its response and recommends checking official internal sources
 when the demonstration knowledge base does not contain an answer.
+
+Chat messages are checked by a small backend dictionary after normalization
+before they are sent to an AI provider. This is a basic configurable filter,
+not a complete moderation or safety system.
 
 ## Run the application
 

@@ -24,6 +24,7 @@ import {
   updateConversationTitle,
 } from "./database.js";
 import { knowledgePrompt } from "./knowledge.js";
+import { moderateMessage } from "./moderation.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -334,6 +335,11 @@ app.post("/api/chat", (request, response) => {
     return response.status(400).json({
       error: `Messages must be ${maxMessageLength} characters or fewer.`,
     });
+  }
+
+  const moderation = moderateMessage(message);
+  if (!moderation.allowed) {
+    return response.status(400).json({ error: moderation.error });
   }
 
   let conversationId = request.body?.conversationId;
