@@ -8,10 +8,11 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [failedMessage, setFailedMessage] = useState("");
 
-  async function sendMessage(event) {
-    event.preventDefault();
-    const trimmedMessage = message.trim();
+  async function sendMessage(event, messageToSend = message, isRetry = false) {
+    event?.preventDefault();
+    const trimmedMessage = messageToSend.trim();
 
     if (!trimmedMessage || isLoading) {
       setError("Please enter a message before sending.");
@@ -19,12 +20,15 @@ function App() {
     }
 
     setError("");
+    setFailedMessage("");
     setIsLoading(true);
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      { role: "user", text: trimmedMessage },
-    ]);
-    setMessage("");
+    if (!isRetry) {
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        { role: "user", text: trimmedMessage },
+      ]);
+      setMessage("");
+    }
 
     try {
       const response = await fetch(apiUrl, {
@@ -32,7 +36,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: trimmedMessage }),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(data.error || "The server rejected your message.");
@@ -43,6 +47,7 @@ function App() {
         { role: "assistant", text: data.reply },
       ]);
     } catch (requestError) {
+      setFailedMessage(trimmedMessage);
       setError(
         requestError.message ||
           "Unable to reach the assistant. Please check that the backend is running.",
@@ -56,6 +61,7 @@ function App() {
     setMessages([]);
     setMessage("");
     setError("");
+    setFailedMessage("");
   }
 
   return (
@@ -84,6 +90,15 @@ function App() {
             ))
           )}
           {isLoading && <p className="loading">Assistant is thinking...</p>}
+          {failedMessage && !isLoading && (
+            <button
+              className="retry-button"
+              onClick={() => sendMessage(null, failedMessage, true)}
+              type="button"
+            >
+              Retry sending
+            </button>
+          )}
         </div>
 
         <form className="message-form" onSubmit={sendMessage}>
