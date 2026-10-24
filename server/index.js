@@ -71,9 +71,6 @@ function readCookie(request, name) {
 }
 
 function currentUser(request) {
-  if (process.env.NODE_ENV === "test") {
-    return getOrCreateUser("test@example.com");
-  }
   const token = readCookie(request, "iea_session");
   return token ? getSession(hashValue(token)) : null;
 }
@@ -161,7 +158,11 @@ app.post("/api/auth/verify-code", (request, response) => {
   const token = randomBytes(32).toString("hex");
   createSession(user.id, hashValue(token), new Date(Date.now() + sessionLifetimeMs).toISOString());
   deleteOtpChallenge(challenge.id);
-  response.setHeader("Set-Cookie", `iea_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionLifetimeMs / 1000}`);
+  const secureCookie = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  response.setHeader(
+    "Set-Cookie",
+    `iea_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionLifetimeMs / 1000}${secureCookie}`,
+  );
   return response.json({ user: { email: user.email } });
 });
 

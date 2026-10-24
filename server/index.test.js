@@ -11,11 +11,13 @@ import {
 
 let server;
 let baseUrl;
+let authCookie;
 
 test.before(async () => {
   server = app.listen(0);
   const { port } = server.address();
   baseUrl = `http://127.0.0.1:${port}`;
+  authCookie = await loginUser("primary@example.com");
 });
 
 test.after(() => {
@@ -23,6 +25,46 @@ test.after(() => {
 });
 
 async function request(path, options) {
+  const headers = new Headers(options?.headers);
+  if (authCookie && !headers.has("cookie")) {
+    headers.set("cookie", authCookie);
+  }
+  return fetch(`${baseUrl}${path}`, { ...options, headers });
+}
+
+async function loginUser(email) {
+  let otp;
+  const originalLog = console.log;
+  console.log = (line, ...args) => {
+    const match = String(line).match(/^\[development OTP\] .*: (\d{6})$/);
+    if (match) otp = match[1];
+    originalLog(line, ...args);
+  };
+
+  try {
+    const requestCodeResponse = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(requestCodeResponse.status, 200);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(otp, /^\d{6}$/);
+  const verifyResponse = await requestWithoutAuth("/api/auth/verify-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, code: otp }),
+  });
+  assert.equal(verifyResponse.status, 200);
+  const setCookie = verifyResponse.headers.get("set-cookie");
+  assert.match(setCookie, /^iea_session=[^;]+/);
+  return setCookie.split(";")[0];
+}
+
+async function requestWithoutAuth(path, options) {
   return fetch(`${baseUrl}${path}`, options);
 }
 
@@ -64,6 +106,94 @@ test("reports API health", async () => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: "ok" });
+});
+
+test("rejects protected requests without a verified session", async () => {
+  const response = await requestWithoutAuth("/api/conversations");
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: "Please verify your email first.",
+  });
+});
+
+test("enforces OTP resend cooldown and attempt limits", async () => {
+  const email = "otp-limits@example.com";
+  let otp;
+  const originalLog = console.log;
+  console.log = (line, ...args) => {
+    const match = String(line).match(/^\[development OTP\] .*: (\d{6})$/);
+    if (match) otp = match[1];
+    originalLog(line, ...args);
+  };
+
+  try {
+    const first = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(first.status, 200);
+
+    const cooldown = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(cooldown.status, 429);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(otp, /^\d{6}$/);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const response = await requestWithoutAuth("/api/auth/verify-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, code: "000000" }),
+    });
+    assert.equal(response.status, 401);
+  }
+
+  const blocked = await requestWithoutAuth("/api/auth/verify-code", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, code: otp }),
+  });
+  assert.equal(blocked.status, 401);
+});
+
+test("isolates conversations between verified users", async () => {
+  const firstUserCookie = authCookie;
+  const secondUserCookie = await loginUser("secondary@example.com");
+
+  const createResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { cookie: firstUserCookie, "content-type": "application/json" },
+    body: JSON.stringify({ title: "Private conversation" }),
+  });
+  assert.equal(createResponse.status, 201);
+  const { conversation } = await createResponse.json();
+
+  const otherUserResponse = await request(`/api/conversations/${conversation.id}`, {
+    headers: { cookie: secondUserCookie },
+  });
+  assert.equal(otherUserResponse.status, 404);
+  authCookie = firstUserCookie;
+});
+
+test("logs out and invalidates the session", async () => {
+  const temporaryCookie = await loginUser("logout@example.com");
+  const logoutResponse = await requestWithoutAuth("/api/auth/logout", {
+    method: "POST",
+    headers: { cookie: temporaryCookie },
+  });
+  assert.equal(logoutResponse.status, 204);
+
+  const protectedResponse = await requestWithoutAuth("/api/conversations", {
+    headers: { cookie: temporaryCookie },
+  });
+  assert.equal(protectedResponse.status, 401);
 });
 
 test("supports conversation routes in the authenticated test context", async () => {
