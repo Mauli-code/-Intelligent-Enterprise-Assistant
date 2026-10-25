@@ -2,14 +2,17 @@
   "name": "intelligent-enterprise-assistant",
   "private": true,
   "version": "1.0.0",
+  "description": "An offline-capable enterprise chatbot for HR, IT, and document questions, with email 2FA and bad-language filtering.",
+  "author": "Intelligent Enterprise Assistant team",
   "type": "module",
   "scripts": {
     "client": "vite",
     "server": "node server/index.js",
     "build": "vite build",
-    "test": "NODE_ENV=test node --test server/index.test.js",
+    "test": "NODE_ENV=test node --test server/assistant.test.js server/index.test.js server/nlp.test.js",
     "load-test": "node scripts/load-test.js",
-    "desktop:package": "npm run build && electron-builder --mac dmg --arm64"
+    "desktop:package": "npm run build && electron-builder --mac dmg --arm64",
+    "demo:handbook": "node scripts/generate-demo-handbook.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -34,6 +37,9 @@
     "appId": "com.intelligententerpriseassistant.app",
     "productName": "Intelligent Enterprise Assistant",
     "asar": true,
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**/*",
       "server/**/*",

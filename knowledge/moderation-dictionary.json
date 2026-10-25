@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "description": "System-maintained bad-language dictionary for the Intelligent Enterprise Assistant. Reviewed and extended by the application owner. Entries are matched after normalisation (case, spacing, punctuation, and common leetspeak substitutions) and must match whole words or phrases.",
+  "notes": [
+    "Use lowercase entries only.",
+    "Multi-word entries are matched as consecutive words.",
+    "Keep this file free of employee data; it is shipped with the application."
+  ],
+  "categories": {
+    "profanity": {
+      "severity": "high",
+      "terms": [
+        "fuck", "fucking", "fucked", "fucker", "motherfucker", "shit", "shitty",
+        "bullshit", "bitch", "bastard", "asshole", "arsehole", "dickhead",
+        "cunt", "prick", "wanker", "bollocks", "bloody hell", "damn", "goddamn",
+        "crap", "piss", "pissed", "twat", "slut", "whore", "hooker"
+      ]
+    },
+    "indian-language-profana": {
+      "severity": "high",
+      "description": "Common Hindi/Hinglish abuse written in Latin script or Devanagari.",
+      "terms": [
+        "chutiya", "chutia", "chutiye", "madarchod", "madarchodh", "bhenchod",
+        "behenchod", "bhosdi", "bhosdike", "gandu", "gaandu", "harami",
+        "haramkhor", "kamina", "kamine", "kaminey", "randi", "raand", "lund",
+        "lauda", "lavda", "jhatu", "chodu", "chod", "bsdk", "mkc", "bkl",
+        "चूतिया", "मादरचोद", "भेंचोद", "गांडू", "हरामी", "कमीना", "रंडी",
+        "भोसड़ी", "लौड़ा", "कुत्ते"
+      ]
+    },
+    "insult": {
+      "severity": "medium",
+      "description": "Demeaning language that is not acceptable in a workplace channel.",
+      "terms": [
+        "idiot", "idiotic", "moron", "moronic", "imbecile", "retard", "retarded",
+        "dumbass", "jackass", "loser", "scum", "trash", "garbage person",
+        "shut up", "shut your mouth", "stupid", "brainless", "worthless",
+        "incompetent fool", "useless idiot"
+      ]
+    },
+    "harassment": {
+      "severity": "high",
+      "description": "Threatening or harassing phrases.",
+      "terms": [
+        "kill you", "kill yourself", "i will hurt you", "watch your back",
+        "you will regret", "go to hell", "die", "kys"
+      ]
+    },
+    "hate": {
+      "severity": "high",
+      "terms": [
+        "racial slur", "ethnic cleansing", "subhuman", "inferior race"
+      ]
+    }
+  }
+}

@@ -1,8 +1,9 @@
+import "./test-setup.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { app } from "./index.js";
 import { findKnowledgeSources, knowledgePrompt } from "./knowledge.js";
-import { findBlockedTerm, moderateMessage } from "./moderation.js";
+import { censorText, findBlockedTerm, moderateMessage } from "./moderation.js";
 import {
   resetEmailTransportForTests,
   setEmailTransportForTests,
@@ -21,6 +22,9 @@ const testRunId = `${Date.now()}-${process.pid}`;
 const testEmail = (name) => `${name}-${testRunId}@example.com`;
 
 test.before(async () => {
+  // Force the offline engine so tests never depend on an external API key.
+  process.env.AI_PROVIDER = "local";
+  delete process.env.GEMINI_API_KEY;
   process.env.AUTH_EMAIL_MODE = "smtp";
   process.env.SMTP_HOST = "smtp.test";
   process.env.SMTP_PORT = "587";
@@ -78,13 +82,13 @@ async function requestWithoutAuth(path, options) {
   return fetch(`${baseUrl}${path}`, options);
 }
 
-function pdfUpload({ filename = "document.pdf", content = "%PDF-1.7" } = {}) {
+function pdfUpload({
+  filename = "document.pdf",
+  content = "%PDF-1.7",
+  type = "application/pdf",
+} = {}) {
   const form = new FormData();
-  form.append(
-    "document",
-    new Blob([content], { type: "application/pdf" }),
-    filename,
-  );
+  form.append("document", new Blob([content], { type }), filename);
   return form;
 }
 
@@ -115,7 +119,9 @@ test("reports API health", async () => {
   const response = await request("/api/health");
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { status: "ok" });
+  const data = await response.json();
+  assert.equal(data.status, "ok");
+  assert.equal(data.provider, "local");
 });
 
 test("rejects protected requests without a verified session", async () => {
@@ -315,7 +321,7 @@ test("rejects document uploads to another user's conversation", async () => {
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
-    error: "Upload a PDF from an existing conversation.",
+    error: "Upload a document from an existing conversation.",
   });
 });
 
@@ -355,7 +361,8 @@ test("rejects moderated chat messages before provider configuration", async () =
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
-    error: "Please rephrase your message using respectful language.",
+    error:
+      "Please rephrase your message using respectful language. Abuse and profanity are not permitted in this assistant.",
   });
 });
 
@@ -411,45 +418,34 @@ test("creates, reads, and deletes a conversation", async () => {
   assert.equal(missingResponse.status, 404);
 });
 
-test("reports missing AI configuration after extracting PDF text", async () => {
-  const originalApiKey = process.env.GEMINI_API_KEY;
-  delete process.env.GEMINI_API_KEY;
+test("summarizes an uploaded PDF without any AI provider", async () => {
   const conversationResponse = await request("/api/conversations", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title: "PDF configuration test" }),
+    body: JSON.stringify({ title: "Local PDF summary test" }),
   });
   const { conversation } = await conversationResponse.json();
 
-  try {
-    const form = pdfUpload({ content: textPdf });
-    form.append("conversationId", conversation.id);
-    const response = await request("/api/documents", {
-      method: "POST",
-      body: form,
-    });
+  const form = pdfUpload({ content: textPdf });
+  form.append("conversationId", conversation.id);
+  const response = await request("/api/documents", { method: "POST", body: form });
 
-    test("does not expose a Gemini key in the environment template", async () => {
-      const environmentTemplate = await import("node:fs/promises").then((fs) =>
-        fs.readFile(new URL("../.env.example", import.meta.url), "utf8"),
-      );
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.provider, "local-nlp");
+  assert.equal(data.kind, "pdf");
+  assert.match(data.summary, /Hello PDF/);
+  assert.ok(Array.isArray(data.keywords));
+  assert.ok(data.statistics.words > 0);
+});
 
-      assert.match(environmentTemplate, /GEMINI_API_KEY=your_gemini_api_key_here/);
-      assert.doesNotMatch(environmentTemplate, /GEMINI_API_KEY=AQ\./);
-    });
+test("does not expose a Gemini key in the environment template", async () => {
+  const environmentTemplate = await import("node:fs/promises").then((fs) =>
+    fs.readFile(new URL("../.env.example", import.meta.url), "utf8"),
+  );
 
-    assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), {
-      error:
-        "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
-    });
-  } finally {
-    if (originalApiKey === undefined) {
-      delete process.env.GEMINI_API_KEY;
-    } else {
-      process.env.GEMINI_API_KEY = originalApiKey;
-    }
-  }
+  assert.match(environmentTemplate, /GEMINI_API_KEY=your_gemini_api_key_here/);
+  assert.doesNotMatch(environmentTemplate, /GEMINI_API_KEY=AQ\./);
 });
 
 test("rejects document uploads without a file", async () => {
@@ -460,7 +456,7 @@ test("rejects document uploads without a file", async () => {
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
-    error: "Please upload a PDF document.",
+    error: "Please upload a document.",
   });
 });
 
@@ -506,19 +502,23 @@ test("rejects document uploads with the wrong field name", async () => {
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
-    error: 'Upload the PDF using the "document" field.',
+    error: 'Upload the document using the "document" field.',
   });
 });
 
 test("rejects non-PDF document uploads", async () => {
   const response = await request("/api/documents", {
     method: "POST",
-    body: pdfUpload({ filename: "notes.txt", content: "plain text" }),
+    body: pdfUpload({
+      filename: "malware.exe",
+      content: "MZ",
+      type: "application/octet-stream",
+    }),
   });
 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
-    error: "Only PDF files are supported.",
+    error: "Only PDF, TXT, MD, and CSV files are supported.",
   });
 });
 
@@ -555,7 +555,7 @@ test("rejects PDF uploads larger than 5 MB", async () => {
 
   assert.equal(response.status, 413);
   assert.deepEqual(await response.json(), {
-    error: "PDF files must be 5 MB or smaller.",
+    error: "Documents must be 5 MB or smaller.",
   });
 });
 
@@ -585,29 +585,19 @@ test("rejects chat messages over the length limit", async () => {
   });
 });
 
-test("reports missing AI configuration", async () => {
-  const originalApiKey = process.env.GEMINI_API_KEY;
-  delete process.env.GEMINI_API_KEY;
+test("answers from the offline engine when no AI provider is configured", async () => {
+  const response = await request("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "How do I submit a leave request?" }),
+  });
 
-  try {
-    const response = await request("/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message: "Hello" }),
-    });
-
-    assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), {
-      error:
-        "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
-    });
-  } finally {
-    if (originalApiKey === undefined) {
-      delete process.env.GEMINI_API_KEY;
-    } else {
-      process.env.GEMINI_API_KEY = originalApiKey;
-    }
-  }
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.provider, "local-nlp");
+  assert.match(data.reply, /leave/i);
+  assert.ok(data.sources.includes("demo-hr-policy.md"));
+  assert.equal(data.intent.id, "hr");
 });
 
 test("returns JSON for malformed request bodies", async () => {
@@ -643,4 +633,183 @@ test("returns a JSON 404 for unknown routes", async () => {
   assert.deepEqual(await response.json(), {
     error: "The requested endpoint was not found.",
   });
+});
+
+test("exposes runtime configuration without secrets", async () => {
+  const response = await requestWithoutAuth("/api/config");
+
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.provider, "local");
+  assert.equal(data.providerConfigured, false);
+  assert.equal(data.limits.responseBudgetMs, 5000);
+  assert.ok(data.limits.supportedDocuments.includes("pdf"));
+  assert.equal(JSON.stringify(data).includes("API_KEY"), false);
+});
+
+test("development email mode issues a usable code without SMTP", async () => {
+  const previousMode = process.env.AUTH_EMAIL_MODE;
+  process.env.AUTH_EMAIL_MODE = "console";
+
+  try {
+    const email = testEmail("dev-otp");
+    const requestResponse = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+
+    assert.equal(requestResponse.status, 200);
+    const payload = await requestResponse.json();
+    assert.match(payload.devCode, /^\d{6}$/);
+
+    const verifyResponse = await requestWithoutAuth("/api/auth/verify-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, code: payload.devCode }),
+    });
+    assert.equal(verifyResponse.status, 200);
+    assert.match(verifyResponse.headers.get("set-cookie"), /^iea_session=/);
+  } finally {
+    process.env.AUTH_EMAIL_MODE = previousMode;
+  }
+});
+
+test("never allows the development OTP shortcut in production", async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousMode = process.env.AUTH_EMAIL_MODE;
+  process.env.NODE_ENV = "production";
+  process.env.AUTH_EMAIL_MODE = "console";
+
+  try {
+    const response = await requestWithoutAuth("/api/auth/request-code", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: testEmail("prod-otp") }),
+    });
+
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).devCode, undefined);
+  } finally {
+    process.env.NODE_ENV = previousNodeEnv;
+    process.env.AUTH_EMAIL_MODE = previousMode;
+  }
+});
+
+test("filters Hindi and Hinglish abuse while allowing normal Hindi", async () => {
+  assert.equal(findBlockedTerm("तुम चूतिया हो"), "चूतिया");
+  assert.equal(findBlockedTerm("you are a chutiya"), "chutiya");
+  assert.equal(findBlockedTerm("कृपया मेरी मदद करें"), null);
+  assert.equal(findBlockedTerm("यह नीति क्या है"), null);
+});
+
+test("censors abusive words while preserving innocent words", () => {
+  const censored = censorText("This is shit but the assistant is helpful.");
+
+  assert.match(censored, /assistant/);
+  assert.equal(censored.includes("shit"), false);
+});
+
+test("summarizes an uploaded text document offline", async () => {
+  const conversationResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Text document test" }),
+  });
+  const { conversation } = await conversationResponse.json();
+
+  const content = `Leave Policy
+Employees must apply for planned leave at least seven calendar days in advance.
+Travel reimbursement requires original invoices and manager approval.
+Information security requires two-factor authentication for every application.`;
+
+  const form = pdfUpload({ filename: "policy-notes.md", content, type: "text/markdown" });
+  form.append("conversationId", conversation.id);
+  const response = await request("/api/documents", { method: "POST", body: form });
+
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.kind, "text");
+  assert.equal(data.provider, "local-nlp");
+  assert.ok(data.keywords.length > 0);
+  assert.ok(data.statistics.words > 10);
+});
+
+test("answers follow-up questions from an uploaded document", async () => {
+  const conversationResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Document follow-up test" }),
+  });
+  const { conversation } = await conversationResponse.json();
+
+  const content = `Safety Handbook
+The emergency assembly point is the north parking area.
+Fire drills are conducted every quarter and attendance is mandatory.`;
+  const form = pdfUpload({ filename: "safety.md", content, type: "text/markdown" });
+  form.append("conversationId", conversation.id);
+  const uploadResponse = await request("/api/documents", { method: "POST", body: form });
+  assert.equal(uploadResponse.status, 200);
+
+  const response = await request("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      conversationId: conversation.id,
+      message: "Where is the emergency assembly point in this document?",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.match(data.reply, /north parking/i);
+  assert.ok(data.sources.includes("safety.md"));
+});
+
+test("answers common employee questions well within five seconds", async () => {
+  const conversationResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "Latency budget test" }),
+  });
+  const { conversation } = await conversationResponse.json();
+
+  const questions = [
+    "How do I apply for leave?",
+    "My laptop will not connect to wifi",
+    "When is the next training workshop?",
+    "Where do I find the internal portal?",
+  ];
+
+  const startedAt = performance.now();
+  for (const question of questions) {
+    const response = await request("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId: conversation.id, message: question }),
+    });
+    assert.equal(response.status, 200);
+    const data = await response.json();
+    assert.ok(data.latencyMs < 5000);
+  }
+  const elapsed = performance.now() - startedAt;
+
+  assert.ok(elapsed < 5000, `four chat replies took ${elapsed.toFixed(0)}ms`);
+});
+
+test("allows legitimate HR policy questions instead of over-blocking", async () => {
+  assert.equal(findBlockedTerm("What is the sexual harassment policy?"), null);
+  assert.equal(
+    findBlockedTerm("Where can I report a harassment complaint?"),
+    null,
+  );
+  assert.equal(censorText("The sexual harassment policy is available.").includes("harassment"), true);
+
+  const response = await request("/api/chat", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: "What is the sexual harassment policy?" }),
+  });
+
+  assert.equal(response.status, 200);
 });

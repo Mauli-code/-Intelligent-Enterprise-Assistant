@@ -58,12 +58,46 @@ export function resetEmailTransportForTests() {
   testTransport = undefined;
 }
 
+function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * Development delivery mode. It exists so a reviewer can complete the email
+ * second factor without an SMTP account. It is impossible to enable in
+ * production and it never sends mail.
+ */
+export function devOtpEnabled() {
+  if (isProduction()) return false;
+  if (String(process.env.IEA_DEV_OTP || "").toLowerCase() === "false") return false;
+  return (process.env.AUTH_EMAIL_MODE || "console") === "console";
+}
+
+/** Safe, non-secret description of the current email configuration. */
+export function emailDeliveryStatus() {
+  const mode = process.env.AUTH_EMAIL_MODE || "console";
+  return {
+    mode,
+    devOtp: devOtpEnabled(),
+    smtpConfigured: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER),
+  };
+}
+
 export async function sendOtpEmail(email, code) {
   const mode = process.env.AUTH_EMAIL_MODE || "console";
 
   if (mode === "console") {
-    console.info("OTP email delivery is in console mode; no email was sent.");
-    return { mode, accepted: false };
+    // Refuse to fall back to a developer shortcut in production.
+    if (isProduction() || !devOtpEnabled()) {
+      throw new EmailConfigurationError(
+        "Email delivery is not configured. Set AUTH_EMAIL_MODE=smtp.",
+      );
+    }
+
+    console.info(
+      `[dev-otp] Verification code for ${email}: ${code} (development mode, no email sent)`,
+    );
+    return { mode, accepted: true, devCode: code };
   }
 
   if (mode !== "smtp") {

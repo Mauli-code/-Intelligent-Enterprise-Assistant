@@ -207,6 +207,73 @@ h1 {
 .message p {
   margin: 6px 0 0;
   overflow-wrap: anywhere;
+  /* Assistant replies are plain text with bullet lines and blank lines. */
+  white-space: pre-line;
+}
+
+.message-meta {
+  align-items: center;
+  color: #65708a;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.meta-chip {
+  background: #e2e7f5;
+  border-radius: 999px;
+  color: #3546a5;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  text-transform: none;
+}
+
+.provider-badge {
+  background: #ffffff26;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-left: 10px;
+  padding: 3px 10px;
+  text-transform: uppercase;
+}
+
+.dev-note {
+  background: #fff7e6;
+  border: 1px solid #f0d9a8;
+  border-radius: 10px;
+  color: #7a5300 !important;
+  font-size: 0.85rem;
+  padding: 10px 12px;
+}
+
+.doc-stats {
+  color: #53618a;
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+.keyword-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.keyword-list li {
+  background: #3546a5;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.78rem;
+  padding: 4px 11px;
+}
+
+.auth-shell {
+  justify-content: center;
 }
 
 .loading {

@@ -25,6 +25,11 @@ async function request(path, options) {
   return data;
 }
 
+function providerLabel(provider) {
+  if (!provider) return "";
+  return provider === "gemini" ? "Gemini" : "Offline NLP";
+}
+
 function App() {
   const [conversations, setConversations] = useState([]);
   const [conversationId, setConversationId] = useState("");
@@ -34,15 +39,22 @@ function App() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [error, setError] = useState("");
   const [failedMessage, setFailedMessage] = useState("");
-  const [pdfFile, setPdfFile] = useState(null);
-  const [pdfSummary, setPdfSummary] = useState(null);
-  const [isPdfLoading, setIsPdfLoading] = useState(false);
+  const [documentFile, setDocumentFile] = useState(null);
+  const [documentResult, setDocumentResult] = useState(null);
+  const [isDocumentLoading, setIsDocumentLoading] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authCode, setAuthCode] = useState("");
   const [isCodeSent, setIsCodeSent] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [config, setConfig] = useState(null);
+
+  useEffect(() => {
+    request("/config")
+      .then(setConfig)
+      .catch(() => setConfig(null));
+  }, []);
 
   async function refreshConversations(selectedId = conversationId) {
     const data = await request("/conversations");
@@ -63,6 +75,7 @@ function App() {
         text: savedMessage.content,
       })),
     );
+    setDocumentResult(null);
     setError("");
     setFailedMessage("");
   }
@@ -77,6 +90,7 @@ function App() {
     setConversationId(data.conversation.id);
     setMessages([]);
     setMessage("");
+    setDocumentResult(null);
     await refreshConversations(data.conversation.id);
   }
 
@@ -141,6 +155,9 @@ function App() {
       });
       setIsCodeSent(true);
       setAuthMessage(data.message);
+      // Development mode returns the code so the flow can be demonstrated
+      // without an SMTP account. Production never returns this field.
+      if (data.devCode) setAuthCode(data.devCode);
     } catch (requestError) {
       setAuthMessage("");
       setError(requestError.message);
@@ -174,6 +191,9 @@ function App() {
       setConversations([]);
       setConversationId("");
       setMessages([]);
+      setAuthCode("");
+      setIsCodeSent(false);
+      setAuthMessage("");
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -215,6 +235,9 @@ function App() {
           role: "assistant",
           text: data.reply,
           sources: data.sources || [],
+          provider: data.provider,
+          latencyMs: data.latencyMs,
+          intent: data.intent?.label,
         },
       ]);
       await refreshConversations(conversationId);
@@ -236,19 +259,19 @@ function App() {
     setFailedMessage("");
   }
 
-  async function summarizePdf(event) {
+  async function uploadDocument(event) {
     event.preventDefault();
 
-    if (!pdfFile) {
-      setError("Please choose a PDF file first.");
+    if (!documentFile) {
+      setError("Please choose a document first.");
       return;
     }
 
     setError("");
-    setPdfSummary(null);
-    setIsPdfLoading(true);
+    setDocumentResult(null);
+    setIsDocumentLoading(true);
     const formData = new FormData();
-    formData.append("document", pdfFile);
+    formData.append("document", documentFile);
     formData.append("conversationId", conversationId);
 
     try {
@@ -256,40 +279,89 @@ function App() {
         method: "POST",
         body: formData,
       });
-      setPdfSummary(data);
+      setDocumentResult(data);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
-      setIsPdfLoading(false);
+      setIsDocumentLoading(false);
     }
   }
 
   if (!userEmail) {
     return (
-      <main className="app-shell">
+      <main className="app-shell auth-shell">
         <section className="chat-card auth-card">
           <h1>Verify your email</h1>
-          <p>Enter your email to receive a verification code.</p>
-          <form aria-busy={isAuthLoading} onSubmit={isCodeSent ? verifyCode : requestCode}>
+          <p>
+            Sign-in uses a six-digit code sent to your email address as the
+            second authentication factor.
+          </p>
+          {config?.email?.devOtp && (
+            <p className="dev-note" role="note">
+              Development mode is active: no email will be sent and the code is
+              shown here. Configure <code>AUTH_EMAIL_MODE=smtp</code> for real
+              email delivery.
+            </p>
+          )}
+          <form
+            aria-busy={isAuthLoading}
+            onSubmit={isCodeSent ? verifyCode : requestCode}
+          >
             <label htmlFor="auth-email">Email</label>
-            <input id="auth-email" type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} disabled={isAuthLoading} required />
+            <input
+              id="auth-email"
+              type="email"
+              value={authEmail}
+              onChange={(event) => setAuthEmail(event.target.value)}
+              disabled={isAuthLoading}
+              required
+            />
             {isCodeSent && (
               <>
                 <label htmlFor="auth-code">Verification code</label>
-                <input id="auth-code" inputMode="numeric" maxLength="6" pattern="[0-9]{6}" value={authCode} onChange={(event) => setAuthCode(event.target.value.replace(/\D/g, "").slice(0, 6))} disabled={isAuthLoading} required />
+                <input
+                  id="auth-code"
+                  inputMode="numeric"
+                  maxLength="6"
+                  pattern="[0-9]{6}"
+                  value={authCode}
+                  onChange={(event) =>
+                    setAuthCode(event.target.value.replace(/\D/g, "").slice(0, 6))
+                  }
+                  disabled={isAuthLoading}
+                  required
+                />
               </>
             )}
-            <button className="send-button" disabled={isAuthLoading} type="submit">{isAuthLoading ? "Please wait..." : isCodeSent ? "Verify code" : "Send code"}</button>
+            <button className="send-button" disabled={isAuthLoading} type="submit">
+              {isAuthLoading
+                ? "Please wait..."
+                : isCodeSent
+                  ? "Verify code"
+                  : "Send code"}
+            </button>
           </form>
-          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
-          {error && <p className="error" role="alert">{error}</p>}
+          {authMessage && (
+            <p className="auth-message" role="status">
+              {authMessage}
+            </p>
+          )}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
         </section>
       </main>
     );
   }
 
   if (isHistoryLoading) {
-    return <main className="app-shell"><p>Loading conversations...</p></main>;
+    return (
+      <main className="app-shell">
+        <p>Loading conversations...</p>
+      </main>
+    );
   }
 
   return (
@@ -306,8 +378,14 @@ function App() {
         ) : (
           <ul className="conversation-list">
             {conversations.map((conversation) => (
-              <li className={conversation.id === conversationId ? "selected" : ""} key={conversation.id}>
-                <button type="button" onClick={() => openConversation(conversation.id)}>
+              <li
+                className={conversation.id === conversationId ? "selected" : ""}
+                key={conversation.id}
+              >
+                <button
+                  type="button"
+                  onClick={() => openConversation(conversation.id)}
+                >
                   {conversation.title}
                 </button>
                 <button
@@ -328,8 +406,18 @@ function App() {
         <header className="chat-header">
           <div>
             <h1>Intelligent Enterprise Assistant</h1>
-            <p className="subtitle">Ask a question to start a conversation.</p>
-            <p className="account-status">Signed in as {userEmail}</p>
+            <p className="subtitle">
+              Ask about HR policy, IT support, company events, or upload a
+              document.
+            </p>
+            <p className="account-status">
+              Signed in as {userEmail}
+              {config?.provider && (
+                <span className="provider-badge">
+                  {providerLabel(config.provider)} mode
+                </span>
+              )}
+            </p>
           </div>
           <div className="header-actions">
             <button className="secondary-button" type="button" onClick={clearChat}>
@@ -343,21 +431,51 @@ function App() {
 
         <div className="messages" aria-live="polite">
           {messages.length === 0 ? (
-            <p className="empty-state">Your messages and assistant replies will appear here.</p>
+            <p className="empty-state">
+              Try: “How do I apply for leave?” or “My laptop will not connect to
+              wifi”.
+            </p>
           ) : (
             messages.map((chatMessage, index) => (
-              <div className={`message ${chatMessage.role}`} key={`${chatMessage.role}-${index}`}>
+              <div
+                className={`message ${chatMessage.role}`}
+                key={`${chatMessage.role}-${index}`}
+              >
                 <span>{chatMessage.role === "user" ? "You" : "Assistant"}</span>
                 <p>{chatMessage.text}</p>
-                {chatMessage.sources?.length > 0 && (
-                  <small>Sources: {chatMessage.sources.join(", ")}</small>
-                )}
+                {chatMessage.role === "assistant" &&
+                  (chatMessage.sources?.length > 0 ||
+                    chatMessage.provider ||
+                    chatMessage.latencyMs) && (
+                    <small className="message-meta">
+                      {chatMessage.provider && (
+                        <span className="meta-chip">
+                          {providerLabel(chatMessage.provider)}
+                        </span>
+                      )}
+                      {chatMessage.intent && (
+                        <span className="meta-chip">{chatMessage.intent}</span>
+                      )}
+                      {typeof chatMessage.latencyMs === "number" && (
+                        <span className="meta-chip">
+                          {Math.round(chatMessage.latencyMs)} ms
+                        </span>
+                      )}
+                      {chatMessage.sources?.length > 0 && (
+                        <span>Sources: {chatMessage.sources.join(", ")}</span>
+                      )}
+                    </small>
+                  )}
               </div>
             ))
           )}
           {isLoading && <p className="loading">Assistant is thinking...</p>}
           {failedMessage && !isLoading && (
-            <button className="retry-button" onClick={() => sendMessage(null, failedMessage, true)} type="button">
+            <button
+              className="retry-button"
+              onClick={() => sendMessage(null, failedMessage, true)}
+              type="button"
+            >
               Retry sending
             </button>
           )}
@@ -379,36 +497,52 @@ function App() {
               {isLoading ? "Sending..." : "Send message"}
             </button>
           </div>
-          {error && <p className="error" role="alert">{error}</p>}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
         </form>
 
-        <form className="pdf-form" onSubmit={summarizePdf}>
-          <h2>Summarize a PDF</h2>
+        <form className="pdf-form" onSubmit={uploadDocument}>
+          <h2>Summarize a document</h2>
           <p>
-            Demonstration feature: text-based PDFs up to 5 MB are summarized by
-            Gemini. Scanned PDFs require OCR.
+            Upload a PDF, TXT, MD, or CSV file up to 5 MB. Text is extracted,
+            summarized, and used to answer follow-up questions.
           </p>
           <input
-            accept="application/pdf,.pdf"
+            accept=".pdf,.txt,.md,.csv,application/pdf,text/plain,text/markdown,text/csv"
             onChange={(event) => {
-              setPdfFile(event.target.files?.[0] || null);
-              setPdfSummary(null);
+              setDocumentFile(event.target.files?.[0] || null);
+              setDocumentResult(null);
               setError("");
             }}
             type="file"
           />
-          {pdfFile && <p className="selected-file">Selected: {pdfFile.name}</p>}
-          <button className="send-button" disabled={isPdfLoading} type="submit">
-            {isPdfLoading ? "Summarizing..." : "Upload and summarize"}
+          {documentFile && (
+            <p className="selected-file">Selected: {documentFile.name}</p>
+          )}
+          <button className="send-button" disabled={isDocumentLoading} type="submit">
+            {isDocumentLoading ? "Analysing..." : "Upload and summarize"}
           </button>
-          {pdfSummary && (
+          {documentResult && (
             <div className="pdf-result">
-              <h3>{pdfSummary.filename}</h3>
+              <h3>{documentResult.filename}</h3>
+              <p className="doc-stats">
+                {documentResult.kind === "pdf" && documentResult.pages
+                  ? `${documentResult.pages} pages · `
+                  : ""}
+                {documentResult.statistics.words} words ·{" "}
+                {documentResult.statistics.readingMinutes} min read ·{" "}
+                {providerLabel(documentResult.provider)}
+              </p>
               <p>Document context is attached to this conversation.</p>
-              <p>{pdfSummary.summary}</p>
+              <p>{documentResult.summary}</p>
               <strong>Important keywords</strong>
-              <ul>
-                {pdfSummary.keywords.map((keyword) => <li key={keyword}>{keyword}</li>)}
+              <ul className="keyword-list">
+                {documentResult.keywords.map((keyword) => (
+                  <li key={keyword}>{keyword}</li>
+                ))}
               </ul>
             </div>
           )}

@@ -23,11 +23,14 @@ import {
   saveOtpChallenge,
   updateConversationTitle,
 } from "./database.js";
-import { knowledgePrompt } from "./knowledge.js";
-import { moderateMessage } from "./moderation.js";
+import { activeProvider, generateReply } from "./assistant.js";
+import { withTimeout } from "./async.js";
+import { analyzeDocument } from "./summarize.js";
+import { censorText, moderateMessage } from "./moderation.js";
 import {
   EmailConfigurationError,
   EmailDeliveryError,
+  emailDeliveryStatus,
   sendOtpEmail,
 } from "./email.js";
 
@@ -36,30 +39,20 @@ const port = Number(process.env.PORT) || 3001;
 const maxMessageLength = 1000;
 const maxDocumentSize = 5 * 1024 * 1024;
 const maxExtractedTextLength = 100000;
-const aiRequestTimeoutMs = 30000;
+const aiRequestTimeoutMs = Math.min(Number(process.env.AI_TIMEOUT_MS) || 4000, 4500);
 const otpLifetimeMs = 10 * 60 * 1000;
 const otpResendCooldownMs = 60 * 1000;
 const otpMaxAttempts = 5;
 const sessionLifetimeMs = 24 * 60 * 60 * 1000;
 
-class AiRequestTimeoutError extends Error {
-  constructor() {
-    super("The AI service request timed out.");
-    this.name = "AiRequestTimeoutError";
-  }
-}
-
-function withTimeout(promise, timeoutMs = aiRequestTimeoutMs) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(
-      () => reject(new AiRequestTimeoutError()),
-      timeoutMs,
-    );
-  });
-
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-}
+const TEXT_DOCUMENT_TYPES = new Map([
+  ["text/plain", "txt"],
+  ["text/markdown", "md"],
+  ["text/x-markdown", "md"],
+  ["text/csv", "csv"],
+  ["application/csv", "csv"],
+]);
+const TEXT_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".csv"]);
 
 function normalizeEmail(email) {
   return typeof email === "string" ? email.trim().toLowerCase() : "";
@@ -89,28 +82,64 @@ function requireUser(request, response) {
   return user;
 }
 
+function documentKind(file) {
+  const extension = `.${file.originalname.toLowerCase().split(".").pop()}`;
+  if (file.mimetype === "application/pdf" || extension === ".pdf") return "pdf";
+  if (TEXT_DOCUMENT_TYPES.has(file.mimetype) || TEXT_DOCUMENT_EXTENSIONS.has(extension)) {
+    return "text";
+  }
+  return null;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: maxDocumentSize },
   fileFilter: (_request, file, callback) => {
-    const hasPdfType = file.mimetype === "application/pdf";
-    const hasPdfExtension = file.originalname.toLowerCase().endsWith(".pdf");
-
-    if (!hasPdfType || !hasPdfExtension) {
-      const error = new Error("Only PDF files are supported.");
+    if (!documentKind(file)) {
+      const error = new Error("Only PDF, TXT, MD, and CSV files are supported.");
       error.code = "UNSUPPORTED_FILE_TYPE";
       return callback(error);
     }
-
     return callback(null, true);
   },
 });
 
-app.use(cors({ origin: true, credentials: true }));
+// Reflecting any origin with credentials is convenient in development but too
+// permissive in production, so CORS_ORIGIN can pin the allowed list.
+const allowedOrigins = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.disable("x-powered-by");
+app.use(
+  cors({
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    credentials: true,
+  }),
+);
 app.use(express.json({ limit: "10kb" }));
 
 app.get("/api/health", (_request, response) => {
-  response.json({ status: "ok" });
+  response.json({
+    status: "ok",
+    provider: activeProvider(),
+    uptimeSeconds: Math.round(process.uptime()),
+  });
+});
+
+app.get("/api/config", (_request, response) => {
+  response.json({
+    provider: activeProvider(),
+    providerConfigured: Boolean(process.env.GEMINI_API_KEY),
+    email: emailDeliveryStatus(),
+    limits: {
+      maxMessageLength,
+      maxDocumentSize,
+      supportedDocuments: ["pdf", "txt", "md", "csv"],
+      responseBudgetMs: 5000,
+    },
+  });
 });
 
 app.post("/api/auth/request-code", async (request, response) => {
@@ -124,7 +153,9 @@ app.post("/api/auth/request-code", async (request, response) => {
     previous &&
     Date.now() - Date.parse(previous.last_sent_at) < otpResendCooldownMs
   ) {
-    return response.status(429).json({ error: "Please wait before requesting another code." });
+    return response.status(429).json({
+      error: "Please wait before requesting another code.",
+    });
   }
 
   const code = String(randomInt(100000, 1000000));
@@ -140,9 +171,18 @@ app.post("/api/auth/request-code", async (request, response) => {
     const delivery = await sendOtpEmail(email, code);
     if (!delivery.accepted) {
       return response.status(503).json({
-        error: "Email delivery is not configured. Set AUTH_EMAIL_MODE=smtp to send verification emails.",
+        error:
+          "Email delivery is not configured. Set AUTH_EMAIL_MODE=smtp to send verification emails.",
       });
     }
+
+    return response.json({
+      message: delivery.devCode
+        ? `Development mode: use code ${delivery.devCode}. No email was sent.`
+        : "If this email can be used, a verification code has been sent.",
+      // Only ever populated outside production; see sendOtpEmail().
+      ...(delivery.devCode ? { devCode: delivery.devCode } : {}),
+    });
   } catch (error) {
     deleteOtpChallenge(getOtpChallenge(email)?.id);
     if (error instanceof EmailConfigurationError) {
@@ -162,10 +202,6 @@ app.post("/api/auth/request-code", async (request, response) => {
       error: "The verification email could not be delivered. Please try again later.",
     });
   }
-
-  return response.json({
-    message: "If this email can be used, a verification code has been sent.",
-  });
 });
 
 app.post("/api/auth/verify-code", (request, response) => {
@@ -173,7 +209,11 @@ app.post("/api/auth/verify-code", (request, response) => {
   const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
   const challenge = getOtpChallenge(email);
 
-  if (!challenge || Date.parse(challenge.expires_at) <= Date.now() || challenge.attempts >= otpMaxAttempts) {
+  if (
+    !challenge ||
+    Date.parse(challenge.expires_at) <= Date.now() ||
+    challenge.attempts >= otpMaxAttempts
+  ) {
     return response.status(401).json({ error: "The code is invalid or expired." });
   }
 
@@ -186,7 +226,11 @@ app.post("/api/auth/verify-code", (request, response) => {
 
   const user = getOrCreateUser(email);
   const token = randomBytes(32).toString("hex");
-  createSession(user.id, hashValue(token), new Date(Date.now() + sessionLifetimeMs).toISOString());
+  createSession(
+    user.id,
+    hashValue(token),
+    new Date(Date.now() + sessionLifetimeMs).toISOString(),
+  );
   deleteOtpChallenge(challenge.id);
   const secureCookie = process.env.NODE_ENV === "production" ? "; Secure" : "";
   response.setHeader(
@@ -199,17 +243,22 @@ app.post("/api/auth/verify-code", (request, response) => {
 app.post("/api/auth/logout", (request, response) => {
   const token = readCookie(request, "iea_session");
   if (token) deleteSession(hashValue(token));
-  response.setHeader("Set-Cookie", "iea_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");
+  response.setHeader(
+    "Set-Cookie",
+    "iea_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+  );
   return response.status(204).send();
 });
 
 app.get("/api/auth/me", (request, response) => {
   const user = currentUser(request);
-  return user ? response.json({ user: { email: user.email } }) : response.status(401).json({ error: "Not signed in." });
+  return user
+    ? response.json({ user: { email: user.email } })
+    : response.status(401).json({ error: "Not signed in." });
 });
 
-app.get("/api/conversations", (_request, response) => {
-  const user = requireUser(_request, response);
+app.get("/api/conversations", (request, response) => {
+  const user = requireUser(request, response);
   if (!user) return;
   response.json({ conversations: listConversations(user.userId) });
 });
@@ -247,109 +296,153 @@ app.delete("/api/conversations/:id", (request, response) => {
   return response.status(204).send();
 });
 
-app.post("/api/documents", upload.single("document"), async (request, response) => {
-  const user = requireUser(request, response);
-  if (!user) return;
-  if (!request.file) {
-    return response.status(400).json({ error: "Please upload a PDF document." });
+/**
+ * Extract text from an uploaded document.
+ * PDFs use pdf-parse; plain-text formats are decoded directly.
+ */
+async function extractDocumentText(file) {
+  const kind = documentKind(file);
+
+  if (kind === "text") {
+    const text = file.buffer.toString("utf8").replace(/^\uFEFF/, "").trim();
+    return { kind, text, meta: {} };
   }
 
-  const fileHeader = request.file.buffer.subarray(0, 5).toString("ascii");
-
+  const fileHeader = file.buffer.subarray(0, 5).toString("ascii");
   if (fileHeader !== "%PDF-") {
-    return response.status(400).json({
-      error: "The uploaded file is not a readable PDF document.",
-    });
+    const error = new Error("The uploaded file is not a readable PDF document.");
+    error.code = "INVALID_PDF";
+    throw error;
   }
 
-  const parser = new PDFParse({ data: request.file.buffer });
-
+  const parser = new PDFParse({ data: file.buffer });
   try {
     let result;
     try {
       result = await parser.getText();
     } catch {
-      return response.status(422).json({
-        error: "The uploaded PDF could not be read. Please provide a valid text-based PDF.",
-      });
+      const error = new Error(
+        "The uploaded PDF could not be read. Please provide a valid text-based PDF.",
+      );
+      error.code = "UNREADABLE_PDF";
+      throw error;
     }
 
-    const text = result.text.replace(/--\s+\d+\s+of\s+\d+\s+--/g, "").trim();
-
-    if (!text) {
-      return response.status(422).json({
-        error: "This PDF has no selectable text. OCR is required for scanned PDFs.",
-      });
-    }
-
-    const conversationId = request.body?.conversationId;
-    if (!conversationId || !getConversation(conversationId, user.userId)) {
-      return response.status(400).json({
-        error: "Upload a PDF from an existing conversation.",
-      });
-    }
-
-    if (!process.env.GEMINI_API_KEY) {
-      return response.status(503).json({
-        error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
-      });
-    }
-
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const aiResult = await withTimeout(
-      ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: `Summarize this document for a college student. Return only valid JSON with exactly two keys: "summary" (a concise paragraph) and "keywords" (an array of 5 to 10 short strings). Do not use markdown fences.\n\nDocument text:\n${text.slice(0, maxExtractedTextLength)}`,
-      }),
-    );
-    const rawReply = aiResult.text?.trim() || "";
-    const parsedReply = JSON.parse(rawReply);
-
-    if (
-      typeof parsedReply.summary !== "string" ||
-      !Array.isArray(parsedReply.keywords) ||
-      parsedReply.keywords.some((keyword) => typeof keyword !== "string")
-    ) {
-      throw new Error("The AI service returned an invalid document summary.");
-    }
-
-    const documentId = saveDocument(
-      conversationId,
-      request.file.originalname,
-      text.slice(0, maxExtractedTextLength),
-    );
-
-    return response.json({
-      conversationId,
-      documentId,
-      filename: request.file.originalname,
-      size: request.file.size,
-      summary: parsedReply.summary,
-      keywords: parsedReply.keywords,
-    });
-  } catch (error) {
-    if (error instanceof AiRequestTimeoutError) {
-      return response.status(504).json({
-        error: "The AI service took too long to respond. Please try again.",
-      });
-    }
-
-    if (error instanceof SyntaxError) {
-      return response.status(502).json({
-        error: "The AI service returned an invalid document summary.",
-      });
-    }
-
-    console.error("PDF processing failed.");
-    return response.status(502).json({
-      error: "The PDF could not be processed or summarized.",
-    });
+    // pdf-parse inserts "-- 1 of 8 --" markers, and most paged documents repeat
+    // a "page N of M" footer. Neither carries meaning, so both are dropped
+    // before summarization.
+    const text = result.text
+      .replace(/--\s+\d+\s+of\s+\d+\s+--/g, "")
+      .replace(/^.*\bpage\s+\d+\s+of\s+\d+.*$/gim, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    return { kind, text, meta: { pages: result.total } };
   } finally {
     await parser.destroy();
   }
+}
+
+/**
+ * Optional LLM refinement of the document summary. Returns null when the
+ * provider is unavailable so the caller can use the local extractive summary.
+ */
+async function summarizeWithGemini(text) {
+  try {
+    const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    const result = await withTimeout(
+      client.models.generateContent({
+        model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+        contents: `Summarize this workplace document for an employee. Return only valid JSON with exactly two keys: "summary" (one concise paragraph) and "keywords" (5 to 10 short strings). No markdown fences.\n\nDocument text:\n${text.slice(0, 60000)}`,
+      }),
+      aiRequestTimeoutMs,
+    );
+    const parsed = JSON.parse(result.text?.trim() || "");
+    if (
+      typeof parsed.summary !== "string" ||
+      !Array.isArray(parsed.keywords) ||
+      parsed.keywords.some((keyword) => typeof keyword !== "string")
+    ) {
+      return null;
+    }
+    return { summary: parsed.summary, keywords: parsed.keywords };
+  } catch {
+    return null;
+  }
+}
+
+app.post("/api/documents", upload.single("document"), async (request, response) => {
+  const user = requireUser(request, response);
+  if (!user) return;
+  if (!request.file) {
+    return response.status(400).json({ error: "Please upload a document." });
+  }
+
+  let extracted;
+  try {
+    extracted = await extractDocumentText(request.file);
+  } catch (error) {
+    if (error.code === "INVALID_PDF") {
+      return response.status(400).json({ error: error.message });
+    }
+    if (error.code === "UNREADABLE_PDF") {
+      return response.status(422).json({ error: error.message });
+    }
+    console.error("Document extraction failed.");
+    return response.status(422).json({
+      error: "The document could not be processed.",
+    });
+  }
+
+  if (!extracted.text) {
+    return response.status(422).json({
+      error:
+        extracted.kind === "pdf"
+          ? "This PDF has no selectable text. OCR is required for scanned PDFs."
+          : "The uploaded document is empty.",
+    });
+  }
+
+  const conversationId = request.body?.conversationId;
+  if (!conversationId || !getConversation(conversationId, user.userId)) {
+    return response.status(400).json({
+      error: "Upload a document from an existing conversation.",
+    });
+  }
+
+  const text = extracted.text.slice(0, maxExtractedTextLength);
+  const local = analyzeDocument(text);
+
+  // The local analysis always runs, so the endpoint works with no API key.
+  let summary = local.summary;
+  let keywords = local.keywords;
+  let provider = "local-nlp";
+
+  if (process.env.GEMINI_API_KEY && activeProvider() === "gemini") {
+    const refined = await summarizeWithGemini(text);
+    if (refined) {
+      summary = refined.summary;
+      keywords = refined.keywords.slice(0, 12);
+      provider = "gemini";
+    }
+  }
+
+  const documentId = saveDocument(conversationId, request.file.originalname, text);
+
+  return response.json({
+    conversationId,
+    documentId,
+    filename: request.file.originalname,
+    kind: extracted.kind,
+    size: request.file.size,
+    pages: extracted.meta.pages ?? null,
+    summary,
+    keywords,
+    statistics: local.statistics,
+    provider,
+  });
 });
 
-app.post("/api/chat", (request, response) => {
+app.post("/api/chat", async (request, response) => {
   const user = requireUser(request, response);
   if (!user) return;
   const message =
@@ -381,52 +474,47 @@ app.post("/api/chat", (request, response) => {
     conversationId = createConversation(message.slice(0, 60), user.userId).id;
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    return response.status(503).json({
-      error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
+  const conversation = getConversation(conversationId, user.userId);
+  const history = (conversation?.messages || []).map(({ role, content }) => ({
+    role,
+    content,
+  }));
+  const storedDocument = getLatestDocument(conversationId);
+  const document = storedDocument
+    ? { filename: storedDocument.filename, text: storedDocument.extractedText }
+    : null;
+
+  addMessage(conversationId, "user", message);
+
+  let result;
+  try {
+    result = await generateReply({ question: message, document, history });
+  } catch (error) {
+    console.error("Assistant generation failed unexpectedly.");
+    return response.status(500).json({
+      error: "The assistant could not answer. Please try again.",
     });
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  const uploadedDocument = getLatestDocument(conversationId);
-  const knowledge = knowledgePrompt(message, uploadedDocument?.extractedText);
-  addMessage(conversationId, "user", message);
+  // Model output is moderated too, so abuse cannot be reflected back.
+  const reply = censorText(result.reply).trim();
+  if (!reply) {
+    return response.status(502).json({ error: "The assistant returned an empty response." });
+  }
 
-  return withTimeout(
-    ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: knowledge.prompt,
-    }),
-  )
-    .then((result) => {
-      const reply = result.text?.trim();
+  addMessage(conversationId, "assistant", reply);
+  updateConversationTitle(conversationId, message.slice(0, 60));
 
-      if (!reply) {
-        return response
-          .status(502)
-          .json({ error: "The AI service returned an empty response." });
-      }
-
-      addMessage(conversationId, "assistant", reply);
-      updateConversationTitle(conversationId, message.slice(0, 60));
-      return response.json({
-        conversationId,
-        reply,
-        sources: knowledge.sources,
-      });
-    })
-    .catch((error) => {
-      if (error instanceof AiRequestTimeoutError) {
-        return response.status(504).json({
-          error: "The AI service took too long to respond. Please try again.",
-        });
-      }
-
-      console.error("Gemini request failed.");
-      return response
-        .status(502)
-        .json({ error: "The AI service could not generate a response." });
-    });
+  return response.json({
+    conversationId,
+    reply,
+    sources: result.sources,
+    provider: result.provider,
+    intent: result.intent,
+    confidence: result.confidence,
+    latencyMs: result.latencyMs,
+    ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}),
+  });
 });
 
 app.use((_request, response) => {
@@ -436,16 +524,13 @@ app.use((_request, response) => {
 app.use((error, _request, response, _next) => {
   if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
     return response.status(413).json({
-      error: "PDF files must be 5 MB or smaller.",
+      error: "Documents must be 5 MB or smaller.",
     });
   }
 
-  if (
-    error instanceof multer.MulterError &&
-    error.code === "LIMIT_UNEXPECTED_FILE"
-  ) {
+  if (error instanceof multer.MulterError && error.code === "LIMIT_UNEXPECTED_FILE") {
     return response.status(400).json({
-      error: 'Upload the PDF using the "document" field.',
+      error: 'Upload the document using the "document" field.',
     });
   }
 
@@ -470,6 +555,13 @@ app.use((error, _request, response, _next) => {
 export function startServer() {
   return app.listen(port, () => {
     console.log(`API server listening on http://localhost:${port}`);
+    console.log(
+      `Assistant provider: ${activeProvider()} (AI_PROVIDER=${process.env.AI_PROVIDER || "auto"})`,
+    );
+    const emailStatus = emailDeliveryStatus();
+    console.log(
+      `Email second factor: ${emailStatus.devOtp ? "development mode (codes printed to this console)" : emailStatus.mode}`,
+    );
   });
 }
 

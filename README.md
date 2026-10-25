@@ -1,344 +1,329 @@
-# Intelligent Enterprise Assistant
 
-A small React and Express application for chatting with Google Gemini,
-validating PDF uploads, and storing local conversation history. The project is
-intentionally simple and suitable for learning full-stack request handling.
-
-## Current features
-
-- Text chat through Google Gemini using the official `@google/genai` SDK.
-- Backend validation for empty and oversized chat messages.
-- Loading, empty, error, and retry states in the chat interface.
-- PDF upload and summarization:
-  - PDF extension and MIME type are required.
-  - The file must begin with the PDF `%PDF-` signature.
-  - Files are limited to 5 MB.
-  - Uploads are kept in memory and are not saved to disk.
-  - Selectable text is extracted and summarized with Gemini.
-  - Scanned PDFs without selectable text report that OCR is required.
-- JSON error responses for invalid requests, missing configuration, and
-  oversized request bodies.
-- Persistent local conversation history backed by SQLite.
-- Development email OTP verification with hashed, expiring codes and sessions.
-- Backend-controlled configurable bad-language filtering.
-- Demonstration HR, IT-support, and company-events knowledge with source
-  references.
-
-## Technology stack
-
-- React 18 and React DOM
-- Vite
-- Express
-- Multer for in-memory multipart upload handling
-- pdf-parse for PDF text extraction
-- better-sqlite3 for local conversation history
-- Google `@google/genai` SDK
-- Node.js built-in test runner
-
-## Project structure
-
+An offline-capable enterprise chatbot for a large public sector organisation.
+It answers employee questions about HR policy, IT support, company events, and
+general workplace processes, analyses uploaded documents, filters abusive
+language, and protects access with an email second factor.
+The project runs with **no paid services and no API keys**. A Google Gemini key
+and an SMTP account are optional upgrades.
+> **Demonstration data.** Everything under `knowledge/` is sample material
+> written for this project. It is **not** official GAIL policy, an official
+> events calendar, or an official IT procedure. Real deployments must replace it
+> with reviewed organisational content.
+---
+## How the requirements are addressed
+| Requirement | Where it lives | How it works |
+| --- | --- | --- |
+| Understand employee questions | `server/retrieval.js`, `server/localAssistant.js`, `server/assistant.js` | BM25 retrieval with domain synonyms, intent classification, grounded answer composition. Optional Gemini transformer for open-ended phrasing. |
+| HR, IT, events, general questions | `knowledge/*.md` | Retrieval is scoped to curated source documents; every answer cites its source file. |
+| Document analysis and summarization | `server/summarize.js`, `server/index.js` | PDF/TXT/MD/CSV text extraction, TF-weighted extractive summarization, RAKE keyword extraction, document-scoped Q&A. |
+| Minimum 5 parallel users | `scripts/load-test.js` | Five authenticated users run authentication, document upload, and chat concurrently. |
+| Response time under 5 seconds | `server/assistant.js`, `server/async.js` | Local answers in milliseconds; external calls are capped at 4 s and fall back to the local engine. |
+| Two-factor authentication (email) | `server/email.js`, `server/index.js` | Six-digit, hash-stored, expiring, attempt-limited codes; HTTP-only session cookie. |
+| Bad language filtering | `server/moderation.js`, `knowledge/moderation-dictionary.json` | System-maintained dictionary, leetspeak normalisation, English + Hindi/Hinglish, input **and** output filtering. |
+| Free and open source only | `package.json` | Express, React, Vite, SQLite, pdf-parse, nodemailer, badwords-list — all permissively licensed. |
+---
+## Architecture
 ```text
-.
-├── server/
-│   ├── index.js       # Express API and Gemini integration
-│   ├── database.js     # SQLite schema and conversation queries
-│   └── index.test.js  # Backend API and validation tests
-├── knowledge/          # Clearly labeled demonstration documents
-├── src/
-│   ├── App.jsx        # React chat interface
-│   ├── main.jsx       # React entry point
-│   └── styles.css     # Interface styles
-├── .env.example       # Environment variable template
-├── index.html         # Vite HTML entry point
-├── package.json       # Scripts and dependencies
-└── README.md
+Browser (React + Vite)
+   │  HTTP-only session cookie
+   ▼
+Express API (server/index.js)
+   ├── Authentication      server/email.js, server/database.js
+   ├── Moderation          server/moderation.js + knowledge/moderation-dictionary.json
+   ├── Retrieval           server/retrieval.js      (BM25, synonyms, chunking)
+   ├── Answering           server/localAssistant.js  (intent + grounded composition)
+   │                       server/assistant.js      (Gemini optional, local fallback)
+   ├── Documents           server/summarize.js       (extractive summary + RAKE)
+   └── Storage             SQLite (better-sqlite3)
 ```
-
+### Why there are two answer paths
+| Mode | Trigger | Behaviour | Latency |
+| --- | --- | --- | --- |
+| `local-nlp` | default, or no API key | BM25 retrieval + extractive answering. Fully offline and deterministic. | ~5–30 ms |
+| `gemini` | `GEMINI_API_KEY` set and `AI_PROVIDER=auto\|gemini` | Prompt includes retrieved sources, document text, and recent turns. Falls back to `local-nlp` on error or timeout. | typically 1–3 s, capped at 4 s |
+The local path is not a neural model. It is classical information retrieval and
+natural language processing: BM25 ranking, stemmed term matching, synonym
+expansion, intent classification, sentence scoring, and RAKE keyword extraction.
+The deep-learning component is the optional Gemini transformer. This split is
+deliberate: it makes the five-second requirement provable without a GPU and
+keeps the demo working when the network or a quota fails.
+---
 ## Requirements
-
-- Node.js 18 or newer
-- A Google Gemini API key for live assistant replies
-
-## Installation
-
-From the project directory:
-
+- Node.js 18 or newer (developed on Node 24)
+- Nothing else. No API key, SMTP account, or external database is required.
+## Quick start
 ```bash
 npm install
-cp .env.example .env
+npm run server     # terminal 1 -> http://localhost:3001
+npm run client     # terminal 2 -> http://localhost:5173
 ```
-
-Edit `.env` and add your key:
-
-```env
-GEMINI_API_KEY=your_gemini_api_key_here
+1. Enter any email address (for example `employee@example.com`).
+2. Click **Send code**. In development the code is printed to the server console
+   **and** shown in the browser, and it is filled in automatically.
+3. Click **Verify code**.
+4. Ask a question or upload a document.
+No `.env` file is needed for the flow above. Copy `.env.example` to `.env` only
+when you configure Gemini, SMTP, or custom paths.
+### Verification commands
+```bash
+npm test           # 57 automated tests
+npm run build      # production frontend bundle
+npm run load-test  # 5-user concurrency and latency measurement
+npm run demo:handbook  # regenerate the demo PDF
 ```
-
-Keep this file private. It is excluded by `.gitignore` and is read only by
-the backend. Do not put `GEMINI_API_KEY` in React code or in a `VITE_*`
-variable.
-
-For local development, use `AUTH_EMAIL_MODE=console` only to verify that email
-delivery is intentionally disabled. It does not send or print OTPs. To use
-the application, configure SMTP delivery even when testing locally:
-
+---
+## Configuration
+All settings are optional and read from `.env` on the backend only.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AI_PROVIDER` | `auto` | `auto`, `local`, or `gemini`. |
+| `GEMINI_API_KEY` | _(unset)_ | Enables the Gemini answer path. |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Model name for chat and document summaries. |
+| `AI_TIMEOUT_MS` | `4000` | Per-call provider cap (hard-limited to 4500 ms). |
+| `AUTH_EMAIL_MODE` | `console` | `console` (development only) or `smtp`. |
+| `IEA_DEV_OTP` | `true` | Set `false` to disable the development code display. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | — | SMTP connection. |
+| `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` | — | SMTP credentials and sender. |
+| `PORT` | `3001` | API port. |
+| `DATABASE_PATH` | `server/data/assistant.db` | SQLite location. |
+| `IEA_KNOWLEDGE_DIR` | `./knowledge` | Knowledge and dictionary directory. |
+| `VITE_API_URL` | `http://localhost:3001/api/chat` | Frontend API base. |
+| `CORS_ORIGIN` | _(unset)_ | Comma-separated allowed browser origins. Unset reflects any origin (development only). |
+Secrets stay in the backend `.env`. Never place `GEMINI_API_KEY` or SMTP
+credentials in a `VITE_*` variable, because those are compiled into the bundle.
+### Enabling real email 2FA
 ```env
 AUTH_EMAIL_MODE=smtp
-SMTP_HOST=smtp.example.com
+SMTP_HOST=smtp.yourprovider.com
 SMTP_PORT=587
 SMTP_SECURE=false
-SMTP_USER=your_smtp_username
-SMTP_PASSWORD=your_smtp_password
-SMTP_FROM=assistant@example.com
+SMTP_USER=your_username
+SMTP_PASSWORD=your_app_password
+SMTP_FROM=assistant@yourdomain.com
 ```
-
-SMTP credentials stay in the backend `.env` file and must never be committed
-or placed in React/Vite variables. The backend waits for Nodemailer to receive
-the message and reports success only when the SMTP server accepts the
-recipient. It returns a safe error for missing configuration, rejection, or
-timeout. Use a test mailbox/provider while developing.
-
-Optional frontend API configuration:
-
-```env
-VITE_API_URL=http://localhost:3001/api/chat
+The backend waits for the SMTP server to accept the recipient and returns a safe
+error on rejection or timeout. It never reports success for an undelivered code.
+---
+## Authentication and 2FA
+The email code is the **second factor**. It is the factor the application itself
+verifies, and it is deliberately short-lived and single-use:
+- Six digits, generated with `crypto.randomInt`.
+- Stored only as a SHA-256 hash.
+- Expires after 10 minutes; five attempts maximum.
+- 60-second resend cooldown per address.
+- Compared with `timingSafeEqual`.
+- Session tokens are random 32-byte values, stored as hashes, delivered as an
+  `HttpOnly`, `SameSite=Lax` cookie, and marked `Secure` in production.
+**Development shortcut.** With `AUTH_EMAIL_MODE=console` the code is printed to
+the server console and returned to the browser so reviewers can complete the
+flow without an inbox. This is safe because it is hard-blocked when
+`NODE_ENV=production`, and it can be disabled with `IEA_DEV_OTP=false`. A
+production deployment must use `AUTH_EMAIL_MODE=smtp`.
+A full production design would add a first factor (password or SSO) in front of
+this email code. The current prototype is passwordless, which is one factor at
+the password layer plus the verified email challenge. This is stated explicitly
+so the security property is not overstated.
+---
+## Document processing
+Supported: **PDF, TXT, MD, CSV**, up to 5 MB. Files are held in memory for the
+request and never written to disk; only the extracted text is stored with the
+conversation.
+Pipeline:
+1. Validate type, size, and the `%PDF-` signature for PDFs.
+2. Extract text. Page markers (`-- 1 of 8 --`, `page N of M`) are removed.
+3. Rebuild paragraphs from hard-wrapped lines so sentences are not split.
+4. Summarize extractively (TF-weighted sentence ranking with position and
+   emphasis bonuses) and extract keywords with RAKE.
+5. Attach the text to the conversation so follow-up questions are grounded.
+`knowledge/demo-employee-handbook.pdf` is a generated ten-page sample covering
+attendance, leave, pay, IT support, security, conduct, travel, and learning. It
+is produced by `scripts/generate-demo-handbook.mjs`, so the demo is reproducible
+and the content is reviewable in source form.
+Scanned PDFs without a text layer are rejected with a clear OCR message rather
+than returning an empty summary.
+---
+## Moderation
+Two layers:
+1. **Input** — `POST /api/chat` rejects a message before it reaches any provider.
+2. **Output** — assistant replies are masked, so a model cannot echo abuse back.
+The dictionary is `knowledge/moderation-dictionary.json`, maintained by the
+application owner. It has categorised entries (`profanity`,
+`indian-language-profana`, `insult`, `harassment`, `hate`) with severities, and
+it is merged with the MIT-licensed `badwords-list` baseline.
+Behaviour worth knowing:
+- Whole-word and whole-phrase matching, so `assistant`, `class`, and `analysis`
+  are never blocked.
+- Normalisation handles case, accents, punctuation, and common leetspeak
+  (`sh!t`, `b1tch`, `@ss`).
+- Hindi and Hinglish are supported in both Devanagari and Latin script.
+- Clinical and policy terms (`sexual harassment`, `harassment`, `gender`) are
+  explicitly allowed, because blocking legitimate HR questions would be a worse
+  failure than missing an insult.
+- A missing or malformed dictionary degrades to the baseline list instead of
+  crashing the service.
+To extend it, add lowercase terms to the JSON file and restart the server.
+---
+## Measured performance
+`npm run load-test` runs five authenticated users concurrently, each performing
+a document upload, five chat requests, and a history listing, then verifies
+ownership isolation (including cross-user reads returning `404`).
+A representative local run:
+```json
+{
+  "users": 5,
+  "requests": 35,
+  "chatRequests": 25,
+  "documentUploads": 5,
+  "successful": 35,
+  "failed": 0,
+  "averageMs": 19.6,
+  "p95Ms": 83.04,
+  "chatP95Ms": 24.39,
+  "maxMs": 95.36,
+  "wallClockMs": 142.17,
+  "overFiveSeconds": 0,
+  "isolationPassed": true
+}
 ```
-
-`VITE_API_URL` is optional and defaults to the value above. The document
-endpoint is currently at `http://localhost:3001/api/documents`.
-
-The conversation database is created automatically at
-`server/data/assistant.db`. This local file is ignored by Git. It contains
-conversation titles and messages for this local prototype. Conversations and
-their uploaded extracted text are filtered by the verified user's session on
-every history, chat, document, and delete route.
-
-Conversations now belong to the verified email user. OTP codes are stored only
-as hashes, expire after 10 minutes, allow at most five attempts, and have a
-resend cooldown. Session tokens are stored as hashes in SQLite and sent to the
-browser through an HTTP-only cookie. This remains a local prototype: it has no
-production email provider or account-recovery workflow.
-
-The files in `knowledge/` are demonstration data only. They are not official
-GAIL policies, calendars, or IT procedures. The assistant names relevant
-source files in its response and recommends checking official internal sources
-when the demonstration knowledge base does not contain an answer.
-
-Chat messages are checked by an MIT-licensed backend profanity wordlist after
-normalization and before they are sent to an AI provider. Matching is
-whole-word based so terms inside words such as `assistant` are not blocked.
-This filter applies to user input; model output is not automatically blocked,
-so it is not a complete moderation or safety system.
-
-## Run the application
-
-Use two terminals from the project directory.
-
-Terminal 1, start the backend:
-
-```bash
-npm run server
+These numbers measure this application on the machine that ran the test. They do
+not claim provider-side latency. When `AI_PROVIDER=gemini`, a slow provider is
+capped at 4 s and the request is answered by the local engine, so the five-second
+budget holds; that fallback path is exercised by the unit tests.
+---
+## API
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Status, active provider, uptime. |
+| `GET` | `/api/config` | Provider, email mode, limits. No secrets. |
+| `POST` | `/api/auth/request-code` | Send (or, in development, display) the code. |
+| `POST` | `/api/auth/verify-code` | Verify the code and start a session. |
+| `POST` | `/api/auth/logout` | Invalidate the session. |
+| `GET` | `/api/auth/me` | Current user. |
+| `GET` | `/api/conversations` | List the caller's conversations. |
+| `POST` | `/api/conversations` | Create a conversation. |
+| `GET` | `/api/conversations/:id` | Read one conversation and its messages. |
+| `DELETE` | `/api/conversations/:id` | Delete one conversation. |
+| `POST` | `/api/documents` | Upload and analyse a document (multipart `document`). |
+| `POST` | `/api/chat` | Ask a question. |
+Chat response:
+```json
+{
+  "conversationId": "…",
+  "reply": "…",
+  "sources": ["demo-hr-policy.md"],
+  "provider": "local-nlp",
+  "intent": { "id": "hr", "label": "HR and leave" },
+  "confidence": 0.84,
+  "latencyMs": 6.1
+}
 ```
-
-The API listens on `http://localhost:3001`.
-
-Terminal 2, start the frontend:
-
-```bash
-npm run client
-```
-
-Open the local URL printed by Vite, usually `http://localhost:5173`.
-
-## macOS desktop application
-
-Build the Apple Silicon DMG from macOS:
-
-```bash
-npm run desktop:package
-```
-
-The installer is created under `dist/`. The packaged application loads the
-Vite build locally and starts the Express backend itself. It stores the
-SQLite database in Electron's per-user application-data directory and reads
-knowledge files from the application bundle.
-
-Credentials are never bundled. For a packaged app to use Gemini and SMTP,
-copy a private `.env` file to the application's user-data directory shown by
-Electron for `app.getPath("userData")`, then restart the app. The file should
-contain the same backend variables as the development `.env`. Without that
-file, the packaged UI can open but AI replies and SMTP OTP delivery report
-configuration errors.
-
-The unsigned development DMG may require right-clicking the app and choosing
-**Open** in macOS Security & Privacy settings. Production distribution should
-use an Apple Developer signing identity and notarization.
-
-For authentication:
-
-1. Enter an email address in the browser.
-2. Click **Send code**.
-3. Open the configured mailbox and locate the verification email.
-4. Enter the six-digit code in the browser.
-5. Use the history sidebar, chat, and PDF controls after verification.
-6. Use **Sign out** to clear the session cookie.
-
-## API and manual checks
-
-Check backend health:
-
+Every route is scoped to the verified user. A conversation that belongs to
+someone else returns `404`, not `403`, so IDs cannot be probed.
+### Manual checks
 ```bash
 curl http://localhost:3001/api/health
-```
-
-Expected response:
-
-```json
-{"status":"ok"}
-```
-
-Send a chat message after authenticating and include the session cookie and,
-when using an existing conversation, its ID:
-
-```bash
-curl -X POST http://localhost:3001/api/chat \
+curl -X POST http://localhost:3001/api/auth/request-code \
   -H "Content-Type: application/json" \
-  -H "Cookie: iea_session=YOUR_SESSION_COOKIE" \
-  -d '{"conversationId":"YOUR_CONVERSATION_ID","message":"Explain enterprise AI in one sentence."}'
+  -d '{"email":"employee@example.com"}'
+curl -c cookies.txt -X POST http://localhost:3001/api/auth/verify-code \
+  -H "Content-Type: application/json" \
+  -d '{"email":"employee@example.com","code":"123456"}'
+curl -b cookies.txt -X POST http://localhost:3001/api/conversations \
+  -H "Content-Type: application/json" -d '{"title":"Demo"}'
+curl -b cookies.txt -X POST http://localhost:3001/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"conversationId":"YOUR_ID","message":"How do I apply for leave?"}'
 ```
-
-Upload a PDF for extraction and summarization from an existing conversation:
-
-```bash
-curl -X POST http://localhost:3001/api/documents \
-  -F "conversationId=YOUR_CONVERSATION_ID" \
-  -F "document=@knowledge/demo-employee-handbook.pdf"
-```
-
-The upload response contains the filename, size, summary, and important
-keywords. Extracted text is saved with the conversation so later chat
-questions can use the uploaded document context. Original PDF files are not
-stored.
-
-## Tests and build
-
-Run backend tests:
-
+---
+## Tests
 ```bash
 npm test
 ```
-
-Create a production frontend build:
-
+`server/index.test.js` covers the HTTP surface; `server/nlp.test.js` covers
+retrieval, summarization, intent classification, and moderation directly.
+Coverage includes:
+- health, configuration, and unknown routes;
+- OTP delivery success, missing SMTP, SMTP rejection, SMTP timeout, cooldown,
+  attempt limits, session invalidation, and production refusal of the dev code;
+- user isolation for read, delete, document upload, and cross-user access;
+- PDF type, signature, parse, empty-text, and size validation;
+- text/markdown uploads and offline summarization;
+- document-scoped follow-up questions;
+- English, Hindi, and Hinglish moderation plus false-positive allowlisting;
+- local answering, intent classification, and source citation;
+- the four-question latency budget;
+- malformed JSON, oversized bodies, and oversized messages.
+Tests force `AI_PROVIDER=local`, so they never call an external service.
+---
+## macOS desktop build
 ```bash
-npm run build
-```
-
-Run the repeatable five-user local concurrency test:
-
-```bash
-npm run load-test
-```
-
-The load test sends 10 conversation-list requests for each of five parallel
-users against a temporary SQLite database. It reports total requests,
-successful and failed requests, average latency, p95 latency, and requests
-over five seconds. It does not call Gemini, so it measures local API and
-database behavior rather than external provider latency.
-
-The test suite covers health checks, OTP delivery and verification, protected
-routes, session invalidation, user isolation, chat validation, missing Gemini
-configuration, malformed and oversized JSON, PDF type/signature/size checks,
-conversation creation and deletion, missing upload fields, environment-template
-safety, and unknown routes.
-
-## Three-minute demonstration flow
-
-Use a configured private `.env` with a valid Gemini key and SMTP provider
-before presenting the live flow:
-
-1. **Sign in (0:00–0:30)** — Start the backend and frontend, enter a demo
-   email address, receive the six-digit OTP through the configured mailbox,
-   and verify the session.
-2. **Grounded employee chat (0:30–1:15)** — Ask about leave, IT support, or
-   company events. Point out the source filenames shown below the assistant
-   response and explain that the included Markdown files are demonstration
-   data, not official GAIL policy.
-3. **Persistent history (1:15–1:40)** — Send a follow-up question, select
-   another conversation, return to the first one, and show that messages are
-   retained in SQLite for the signed-in user.
-4. **PDF processing (1:40–2:25)** — Upload
-   `knowledge/demo-employee-handbook.pdf`, show the extracted summary and
-   keywords, then ask a follow-up question using the attached document
-   context. Mention that scanned PDFs require OCR and are rejected with
-   guidance.
-5. **Security and resilience (2:25–3:00)** — Sign out, show that protected
-   routes require verification, and optionally demonstrate the respectful
-   language validation or the safe error shown when the backend/provider is
-   unavailable.
-
-Do not use real employee records or production credentials in the
-demonstration.
-
-The concurrency measurement is separate from the functional test suite:
-
-```bash
-npm run load-test
-```
-
-It measures local API/database requests only. It does not prove that an
-external Gemini or email provider will respond within five seconds.
-
-## Submission verification checklist
-
-Run these commands from the repository root and retain their actual output:
-
-```bash
-npm install
-npm test
-npm run build
-npm run load-test
 npm run desktop:package
 ```
-
-Expected project-local verification:
-
-- `npm test`: all automated backend tests pass.
-- `npm run build`: Vite creates the production frontend under `dist/`.
-- `npm run load-test`: five authenticated users complete 50 local API
-  requests, with ownership isolation reported as passed. This excludes
-  Gemini and SMTP latency.
-- `npm run desktop:package`: creates an Apple Silicon installer under
-  `dist/` named `Intelligent-Enterprise-Assistant-<version>-arm64.dmg`.
-- The DMG is unsigned unless an Apple Developer signing identity is configured.
-- A live chat and real inbox OTP require private runtime configuration and
-  must be tested manually; automated tests use mocks and do not claim real
-  provider delivery.
-
-Record the following separately for the final submission:
-
-| Item | Value to provide |
-| --- | --- |
-| Repository | `https://github.com/Mauli-code/-Intelligent-Enterprise-Assistant` |
-| AI chat history | Generate through the AI tool's supported sharing feature; do not invent a URL |
-| DMG path | Exact path printed by `electron-builder` after a successful package |
-| Download URL | GitHub Release or permitted host URL after uploading the tested DMG |
-
+This builds the Vite bundle and produces an Apple Silicon DMG under `dist/`. The
+packaged app starts its own backend, stores SQLite in Electron's user-data
+directory, and reads `knowledge/` from the bundle. Credentials are never
+bundled: put an optional `.env` in the app's `userData` directory to enable
+Gemini or SMTP. Without it, the app runs fully offline.
+The DMG is unsigned. Production distribution needs an Apple Developer identity
+and notarisation.
+---
+## Three-minute demo script
+1. **0:00–0:30 — Sign in with 2FA.** Enter an email, click *Send code*, point
+   out that the code is auto-filled in development mode, then verify. Mention
+   that `AUTH_EMAIL_MODE=smtp` delivers the same code by email and that the
+   development shortcut is refused in production.
+2. **0:30–1:20 — Grounded employee chat.** Ask "How do I apply for leave?" and
+   "My laptop will not connect to wifi". Point out the intent, the cited source
+   file, and the response-time chip under the message.
+3. **1:20–2:05 — Document analysis.** Upload
+   `knowledge/demo-employee-handbook.pdf`. Show the ten-page detection, the
+   summary, the keyword chips, and the word count. Then ask "Summarize this
+   document" and a follow-up such as "What does it say about two-factor
+   authentication?".
+4. **2:05–2:35 — Moderation.** Send "This is sh!t" and show the polite refusal;
+   send a Hindi phrase and show that Hindi abuse is also caught, then show that
+   a legitimate harassment-policy question is *not* blocked.
+5. **2:35–3:00 — Scale and safety.** Run `npm run load-test` and read the JSON:
+   five users, zero failures, p95 under five seconds, isolation passed. Note that
+   an unavailable AI provider degrades to the offline engine instead of failing.
+---
 ## Known limitations
-
-- A live Gemini response requires a valid `GEMINI_API_KEY`; automated tests do
-  not call the external Gemini service.
-- Uploaded PDFs are held in memory for the request and are discarded after the
-  response. Extracted text is retained in the local SQLite database for
-  follow-up questions and should be treated as local prototype data.
-- `knowledge/demo-employee-handbook.pdf` is an eight-page demonstration PDF,
-  not an official GAIL document.
-- OTP delivery requires a configured SMTP provider. The `console` mode does
-  not disclose OTPs and intentionally cannot complete email authentication.
-- The macOS package is configured for Apple Silicon (`arm64`) and is unsigned
-  by default.
-- The local concurrency test does not measure live Gemini or SMTP response
-  time, so a separate provider-backed performance test is required for that
-  claim.
-- Hugging Face is not integrated. The current AI provider is Gemini.
-- There is no multi-agent workflow.
+- The offline answer path is classical NLP, not a trained neural retriever. It is
+  strong on the curated knowledge base and weaker on open-ended paraphrasing.
+  Gemini improves that when configured.
+- The seven knowledge documents are demonstration data and cover a narrow
+  question set. A real deployment needs reviewed HR, IT, and events content.
+- Concurrency was verified with five parallel users. The architecture (stateless
+  HTTP, SQLite WAL-capable, no in-process session state) allows more, but
+  horizontal scale-out needs a shared database or sticky sessions.
+- SQLite is a single-node store. It is appropriate for a prototype and a small
+  office, not for a multi-node production cluster.
+- Document text extraction does not perform OCR; scanned PDFs are rejected with
+  guidance.
+- The email code is the only application-level factor, so the prototype is
+  passwordless rather than a full password + email 2FA.
+- The moderation dictionary is curated, not exhaustive. It reduces risk; it is
+  not a complete content-safety system.
+- The desktop DMG is unsigned.
+- There is no fine-tuned or self-hosted model; the neural component is the
+  optional hosted Gemini API.
+## Repository layout
+```text
+server/
+  index.js                  Express API, routes, validation
+  assistant.js              provider selection, fallback, timing
+  localAssistant.js         intent classification, answer composition
+  retrieval.js              BM25 index, synonyms, chunking
+  summarize.js              extractive summarization, RAKE keywords
+  text.js                   tokenization, stemming, prose normalisation
+  moderation.js             dictionary filtering and censoring
+  email.js                  SMTP and development OTP delivery
+  database.js               SQLite schema and queries
+  async.js                  timeout helper
+  index.test.js             API and integration tests
+  nlp.test.js               retrieval, summarization, moderation units
+knowledge/                  demonstration content + moderation dictionary
+scripts/                    load test, handbook generator
+src/                        React interface
+desktop/                    Electron wrapper
+```

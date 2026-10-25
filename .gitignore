@@ -6,3 +6,5 @@ dist/
 server/data/
 npm-debug.log*
 .DS_Store
+
+release/
