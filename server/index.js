@@ -1,5 +1,7 @@
 import "dotenv/config";
 import { createHash, randomInt, randomBytes, timingSafeEqual } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
@@ -35,6 +37,8 @@ import {
 } from "./email.js";
 
 const app = express();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const port = Number(process.env.PORT) || 3001;
 const maxMessageLength = 1000;
 const maxDocumentSize = 5 * 1024 * 1024;
@@ -515,6 +519,16 @@ app.post("/api/chat", async (request, response) => {
     latencyMs: result.latencyMs,
     ...(result.fallbackReason ? { fallbackReason: result.fallbackReason } : {}),
   });
+});
+
+app.use(express.static(path.join(__dirname, "../dist")));
+
+app.get("*", (request, response, next) => {
+  if (request.path.startsWith("/api")) {
+    return next();
+  }
+
+  return response.sendFile(path.join(__dirname, "../dist/index.html"));
 });
 
 app.use((_request, response) => {
