@@ -1,3 +1,4 @@
+# Intelligent Enterprise Assistant
 
 An offline-capable enterprise chatbot for a large public sector organisation.
 It answers employee questions about HR policy, IT support, company events, and
@@ -148,7 +149,7 @@ Two layers:
 2. **Output** — assistant replies are masked, so a model cannot echo abuse back.
 The dictionary is `knowledge/moderation-dictionary.json`, maintained by the
 application owner. It has categorised entries (`profanity`,
-`indian-language-profana`, `insult`, `harassment`, `hate`) with severities, and
+`indian-language-profanity`, `insult`, `harassment`, `hate`) with severities, and
 it is merged with the MIT-licensed `badwords-list` baseline.
 Behaviour worth knowing:
 - Whole-word and whole-phrase matching, so `assistant`, `class`, and `analysis`
@@ -259,13 +260,13 @@ Tests force `AI_PROVIDER=local`, so they never call an external service.
 ```bash
 npm run desktop:package
 ```
-This builds the Vite bundle and produces an Apple Silicon DMG under `dist/`. The
+This builds the Vite bundle and produces an Apple Silicon DMG under `release/`. The
 packaged app starts its own backend, stores SQLite in Electron's user-data
 directory, and reads `knowledge/` from the bundle. Credentials are never
 bundled: put an optional `.env` in the app's `userData` directory to enable
 Gemini or SMTP. Without it, the app runs fully offline.
-The DMG is unsigned. Production distribution needs an Apple Developer identity
-and notarisation.
+The DMG is ad-hoc signed for local use, but it is not notarised. Production
+distribution needs an Apple Developer identity and notarisation.
 ---
 ## Three-minute demo script
 1. **0:00–0:30 — Sign in with 2FA.** Enter an email, click *Send code*, point
@@ -304,7 +305,7 @@ and notarisation.
   passwordless rather than a full password + email 2FA.
 - The moderation dictionary is curated, not exhaustive. It reduces risk; it is
   not a complete content-safety system.
-- The desktop DMG is unsigned.
+- The desktop DMG is ad-hoc signed but not notarised.
 - There is no fine-tuned or self-hosted model; the neural component is the
   optional hosted Gemini API.
 ## Repository layout
