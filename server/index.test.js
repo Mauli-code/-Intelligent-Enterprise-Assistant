@@ -310,8 +310,17 @@ test("rejects moderated chat messages before provider configuration", async () =
 
 test("finds demonstration HR knowledge and labels it", () => {
   const sources = findKnowledgeSources("How do I submit a leave request?");
-  assert.deepEqual(sources.map((source) => source.name), ["demo-hr-policy.md"]);
+  assert.equal(sources[0].name, "demo-hr-policy.md");
   assert.match(knowledgePrompt("How do I submit a leave request?").prompt, /not official GAIL policy/);
+});
+
+test("finds general employee knowledge and identifies its source", () => {
+  const sources = findKnowledgeSources("Where should I find organization announcements?");
+  assert.equal(sources[0].name, "demo-general-employee.md");
+  assert.match(
+    knowledgePrompt("Where should I find organization announcements?").prompt,
+    /demo-general-employee\.md/,
+  );
 });
 
 test("includes uploaded document context in follow-up prompts", () => {
