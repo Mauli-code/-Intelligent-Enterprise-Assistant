@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const knowledgeDirectory = path.join(process.cwd(), "knowledge");
+const knowledgeDirectory =
+  process.env.IEA_KNOWLEDGE_DIR || path.join(process.cwd(), "knowledge");
 const documents = fs
   .readdirSync(knowledgeDirectory)
   .filter((filename) => filename.endsWith(".md"))

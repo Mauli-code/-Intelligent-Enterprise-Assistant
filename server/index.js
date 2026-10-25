@@ -474,7 +474,7 @@ export function startServer() {
   });
 }
 
-if (process.env.NODE_ENV !== "test") {
+if (process.env.NODE_ENV !== "test" && process.env.IEA_MANAGED_SERVER !== "true") {
   startServer();
 }
 

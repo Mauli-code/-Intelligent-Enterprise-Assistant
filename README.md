@@ -148,6 +148,30 @@ npm run client
 
 Open the local URL printed by Vite, usually `http://localhost:5173`.
 
+## macOS desktop application
+
+Build the Apple Silicon DMG from macOS:
+
+```bash
+npm run desktop:package
+```
+
+The installer is created under `dist/`. The packaged application loads the
+Vite build locally and starts the Express backend itself. It stores the
+SQLite database in Electron's per-user application-data directory and reads
+knowledge files from the application bundle.
+
+Credentials are never bundled. For a packaged app to use Gemini and SMTP,
+copy a private `.env` file to the application's user-data directory shown by
+Electron for `app.getPath("userData")`, then restart the app. The file should
+contain the same backend variables as the development `.env`. Without that
+file, the packaged UI can open but AI replies and SMTP OTP delivery report
+configuration errors.
+
+The unsigned development DMG may require right-clicking the app and choosing
+**Open** in macOS Security & Privacy settings. Production distribution should
+use an Apple Developer signing identity and notarization.
+
 For authentication:
 
 1. Enter an email address in the browser.
