@@ -270,6 +270,55 @@ test("isolates conversations between verified users", async () => {
   authCookie = firstUserCookie;
 });
 
+test("prevents another user from deleting a conversation", async () => {
+  const ownerCookie = authCookie;
+  const otherUserCookie = await loginUser(testEmail("delete-owner-check"));
+  const createResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { cookie: ownerCookie, "content-type": "application/json" },
+    body: JSON.stringify({ title: "Protected delete conversation" }),
+  });
+  const { conversation } = await createResponse.json();
+
+  const deleteResponse = await request(`/api/conversations/${conversation.id}`, {
+    method: "DELETE",
+    headers: { cookie: otherUserCookie },
+  });
+  assert.equal(deleteResponse.status, 404);
+
+  const ownerReadResponse = await request(`/api/conversations/${conversation.id}`, {
+    headers: { cookie: ownerCookie },
+  });
+  assert.equal(ownerReadResponse.status, 200);
+});
+
+test("rejects document uploads to another user's conversation", async () => {
+  const ownerCookie = authCookie;
+  const otherUserCookie = await loginUser(testEmail("document-owner-check"));
+  const createResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { cookie: ownerCookie, "content-type": "application/json" },
+    body: JSON.stringify({ title: "Owned document conversation" }),
+  });
+  assert.equal(createResponse.status, 201);
+  const { conversation } = await createResponse.json();
+
+  const response = await request("/api/documents", {
+    method: "POST",
+    headers: { cookie: otherUserCookie },
+    body: (() => {
+      const form = pdfUpload({ content: textPdf });
+      form.append("conversationId", conversation.id);
+      return form;
+    })(),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "Upload a PDF from an existing conversation.",
+  });
+});
+
 test("logs out and invalidates the session", async () => {
   const temporaryCookie = await loginUser(testEmail("logout"));
   const logoutResponse = await requestWithoutAuth("/api/auth/logout", {
@@ -293,6 +342,8 @@ test("blocks normalized bad-language terms without blocking innocent words", () 
   assert.equal(findBlockedTerm("That is sh!t"), "shit");
   assert.equal(moderateMessage("This is a professional IT request.").allowed, true);
   assert.equal(moderateMessage("That is sh!t").allowed, false);
+  assert.equal(moderateMessage("That is b1tch").allowed, false);
+  assert.equal(moderateMessage("The assistant fixed my issue.").allowed, true);
 });
 
 test("rejects moderated chat messages before provider configuration", async () => {
@@ -363,11 +414,19 @@ test("creates, reads, and deletes a conversation", async () => {
 test("reports missing AI configuration after extracting PDF text", async () => {
   const originalApiKey = process.env.GEMINI_API_KEY;
   delete process.env.GEMINI_API_KEY;
+  const conversationResponse = await request("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "PDF configuration test" }),
+  });
+  const { conversation } = await conversationResponse.json();
 
   try {
+    const form = pdfUpload({ content: textPdf });
+    form.append("conversationId", conversation.id);
     const response = await request("/api/documents", {
       method: "POST",
-      body: pdfUpload({ content: textPdf }),
+      body: form,
     });
 
     test("does not expose a Gemini key in the environment template", async () => {
@@ -402,6 +461,33 @@ test("rejects document uploads without a file", async () => {
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), {
     error: "Please upload a PDF document.",
+  });
+});
+
+test("requires authentication before processing document uploads", async () => {
+  const response = await requestWithoutAuth("/api/documents", {
+    method: "POST",
+    body: pdfUpload({ content: textPdf }),
+  });
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), {
+    error: "Please verify your email first.",
+  });
+});
+
+test("rejects PDFs without selectable text", async () => {
+  const emptyTextPdf = textPdf
+    .replace("<< /Length 44 >>", "<< /Length 32 >>")
+    .replace("(Hello PDF)", "()");
+  const response = await request("/api/documents", {
+    method: "POST",
+    body: pdfUpload({ content: emptyTextPdf }),
+  });
+
+  assert.equal(response.status, 422);
+  assert.deepEqual(await response.json(), {
+    error: "This PDF has no selectable text. OCR is required for scanned PDFs.",
   });
 });
 

@@ -240,8 +240,7 @@ app.get("/api/conversations/:id", (request, response) => {
 app.delete("/api/conversations/:id", (request, response) => {
   const user = requireUser(request, response);
   if (!user) return;
-  const conversation = getConversation(request.params.id, user.userId);
-  if (!conversation || !deleteConversation(request.params.id)) {
+  if (!deleteConversation(request.params.id, user.userId)) {
     return response.status(404).json({ error: "Conversation not found." });
   }
 
@@ -275,7 +274,7 @@ app.post("/api/documents", upload.single("document"), async (request, response) 
       });
     }
 
-    const text = result.text.trim();
+    const text = result.text.replace(/--\s+\d+\s+of\s+\d+\s+--/g, "").trim();
 
     if (!text) {
       return response.status(422).json({
@@ -283,16 +282,16 @@ app.post("/api/documents", upload.single("document"), async (request, response) 
       });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return response.status(503).json({
-        error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
-      });
-    }
-
     const conversationId = request.body?.conversationId;
     if (!conversationId || !getConversation(conversationId, user.userId)) {
       return response.status(400).json({
         error: "Upload a PDF from an existing conversation.",
+      });
+    }
+
+    if (!process.env.GEMINI_API_KEY) {
+      return response.status(503).json({
+        error: "The AI service is not configured. Add GEMINI_API_KEY to the backend .env file.",
       });
     }
 

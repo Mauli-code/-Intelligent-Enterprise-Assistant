@@ -233,6 +233,10 @@ h1 {
   color: #65708a;
 }
 
+.selected-file {
+  overflow-wrap: anywhere;
+}
+
 .pdf-form input {
   display: block;
   margin-bottom: 12px;

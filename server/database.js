@@ -61,6 +61,7 @@ database.exec(`
 
   CREATE INDEX IF NOT EXISTS messages_conversation_id_idx
     ON messages (conversation_id, created_at, id);
+
 `);
 try {
   database.exec("ALTER TABLE conversations ADD COLUMN user_id TEXT");
@@ -69,6 +70,10 @@ try {
     throw error;
   }
 }
+database.exec(`
+  CREATE INDEX IF NOT EXISTS conversations_user_id_updated_at_idx
+    ON conversations (user_id, updated_at);
+`);
 
 export function listConversations(userId) {
   const query = userId
@@ -210,10 +215,10 @@ export function updateConversationTitle(id, title) {
     .run(title, new Date().toISOString(), id);
 }
 
-export function deleteConversation(id) {
+export function deleteConversation(id, userId) {
   return database
-    .prepare("DELETE FROM conversations WHERE id = ?")
-    .run(id).changes > 0;
+    .prepare("DELETE FROM conversations WHERE id = ? AND user_id = ?")
+    .run(id, userId).changes > 0;
 }
 
 export function saveDocument(conversationId, filename, extractedText) {

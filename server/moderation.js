@@ -1,11 +1,4 @@
-const blockedTerms = new Set([
-  "asshole",
-  "bastard",
-  "bitch",
-  "crap",
-  "fuck",
-  "shit",
-]);
+import { array as blockedWords } from "badwords-list";
 
 function normalizeMessage(message) {
   return message
@@ -19,6 +12,8 @@ function normalizeMessage(message) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+const blockedTerms = new Set(blockedWords.map((word) => normalizeMessage(word)));
 
 export function findBlockedTerm(message) {
   const normalized = normalizeMessage(message);

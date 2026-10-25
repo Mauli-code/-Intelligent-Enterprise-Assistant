@@ -109,9 +109,9 @@ endpoint is currently at `http://localhost:3001/api/documents`.
 
 The conversation database is created automatically at
 `server/data/assistant.db`. This local file is ignored by Git. It contains
-conversation titles and messages for this local prototype. Conversations are
-filtered by the verified user's session on every history, chat, and document
-route.
+conversation titles and messages for this local prototype. Conversations and
+their uploaded extracted text are filtered by the verified user's session on
+every history, chat, document, and delete route.
 
 Conversations now belong to the verified email user. OTP codes are stored only
 as hashes, expire after 10 minutes, allow at most five attempts, and have a
@@ -124,9 +124,11 @@ GAIL policies, calendars, or IT procedures. The assistant names relevant
 source files in its response and recommends checking official internal sources
 when the demonstration knowledge base does not contain an answer.
 
-Chat messages are checked by a small backend dictionary after normalization
-before they are sent to an AI provider. This is a basic configurable filter,
-not a complete moderation or safety system.
+Chat messages are checked by an MIT-licensed backend profanity wordlist after
+normalization and before they are sent to an AI provider. Matching is
+whole-word based so terms inside words such as `assistant` are not blocked.
+This filter applies to user input; model output is not automatically blocked,
+so it is not a complete moderation or safety system.
 
 ## Run the application
 
@@ -250,6 +252,34 @@ configuration, malformed and oversized JSON, PDF type/signature/size checks,
 conversation creation and deletion, missing upload fields, environment-template
 safety, and unknown routes.
 
+## Three-minute demonstration flow
+
+Use a configured private `.env` with a valid Gemini key and SMTP provider
+before presenting the live flow:
+
+1. **Sign in (0:00–0:30)** — Start the backend and frontend, enter a demo
+   email address, receive the six-digit OTP through the configured mailbox,
+   and verify the session.
+2. **Grounded employee chat (0:30–1:15)** — Ask about leave, IT support, or
+   company events. Point out the source filenames shown below the assistant
+   response and explain that the included Markdown files are demonstration
+   data, not official GAIL policy.
+3. **Persistent history (1:15–1:40)** — Send a follow-up question, select
+   another conversation, return to the first one, and show that messages are
+   retained in SQLite for the signed-in user.
+4. **PDF processing (1:40–2:25)** — Upload
+   `knowledge/demo-employee-handbook.pdf`, show the extracted summary and
+   keywords, then ask a follow-up question using the attached document
+   context. Mention that scanned PDFs require OCR and are rejected with
+   guidance.
+5. **Security and resilience (2:25–3:00)** — Sign out, show that protected
+   routes require verification, and optionally demonstrate the respectful
+   language validation or the safe error shown when the backend/provider is
+   unavailable.
+
+Do not use real employee records or production credentials in the
+demonstration.
+
 The concurrency measurement is separate from the functional test suite:
 
 ```bash
@@ -258,6 +288,41 @@ npm run load-test
 
 It measures local API/database requests only. It does not prove that an
 external Gemini or email provider will respond within five seconds.
+
+## Submission verification checklist
+
+Run these commands from the repository root and retain their actual output:
+
+```bash
+npm install
+npm test
+npm run build
+npm run load-test
+npm run desktop:package
+```
+
+Expected project-local verification:
+
+- `npm test`: all automated backend tests pass.
+- `npm run build`: Vite creates the production frontend under `dist/`.
+- `npm run load-test`: five authenticated users complete 50 local API
+  requests, with ownership isolation reported as passed. This excludes
+  Gemini and SMTP latency.
+- `npm run desktop:package`: creates an Apple Silicon installer under
+  `dist/` named `Intelligent-Enterprise-Assistant-<version>-arm64.dmg`.
+- The DMG is unsigned unless an Apple Developer signing identity is configured.
+- A live chat and real inbox OTP require private runtime configuration and
+  must be tested manually; automated tests use mocks and do not claim real
+  provider delivery.
+
+Record the following separately for the final submission:
+
+| Item | Value to provide |
+| --- | --- |
+| Repository | `https://github.com/Mauli-code/-Intelligent-Enterprise-Assistant` |
+| AI chat history | Generate through the AI tool's supported sharing feature; do not invent a URL |
+| DMG path | Exact path printed by `electron-builder` after a successful package |
+| Download URL | GitHub Release or permitted host URL after uploading the tested DMG |
 
 ## Known limitations
 
@@ -270,5 +335,10 @@ external Gemini or email provider will respond within five seconds.
   not an official GAIL document.
 - OTP delivery requires a configured SMTP provider. The `console` mode does
   not disclose OTPs and intentionally cannot complete email authentication.
+- The macOS package is configured for Apple Silicon (`arm64`) and is unsigned
+  by default.
+- The local concurrency test does not measure live Gemini or SMTP response
+  time, so a separate provider-backed performance test is required for that
+  claim.
 - Hugging Face is not integrated. The current AI provider is Gemini.
 - There is no multi-agent workflow.
