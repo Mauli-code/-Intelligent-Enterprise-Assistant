@@ -119,6 +119,21 @@ test("local answers cite a source file and admit when they do not know", () => {
   assert.match(unknown.reply, /could not find/i);
 });
 
+test("answers different workplace topics with topic-specific evidence", () => {
+  const questions = [
+    ["How do I apply for leave?", "demo-hr-policy.md", /approved HR system/i],
+    ["My laptop will not connect to wifi", "demo-it-support.md", /network connection/i],
+    ["What events are coming up?", "demo-company-events.md", /safety workshop/i],
+    ["Where can I find announcements?", "demo-general-employee.md", /internal portal/i],
+  ];
+
+  for (const [question, source, evidence] of questions) {
+    const answer = answerLocally({ question });
+    assert.deepEqual(answer.sources, [source]);
+    assert.match(answer.reply, evidence);
+  }
+});
+
 test("answers questions from an uploaded document", () => {
   const document = {
     filename: "safety.md",

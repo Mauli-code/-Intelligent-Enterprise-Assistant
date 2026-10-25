@@ -1,8 +1,22 @@
 import React, { useEffect, useState } from "react";
 
-const apiBaseUrl = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/chat$/, "")
-  : "http://localhost:3001/api";
+function getApiBaseUrl() {
+  const configuredUrl = import.meta.env.VITE_API_URL;
+  if (!configuredUrl) {
+    return `http://${window.location.hostname}:3001/api`;
+  }
+
+  const url = new URL(configuredUrl.replace(/\/chat$/, ""));
+  if (
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ) {
+    url.hostname = window.location.hostname;
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+const apiBaseUrl = getApiBaseUrl();
 
 async function request(path, options) {
   let response;
@@ -203,8 +217,12 @@ function App() {
     event?.preventDefault();
     const trimmedMessage = messageToSend.trim();
 
-    if (!trimmedMessage || isLoading || !conversationId) {
+    if (!trimmedMessage) {
       setError("Please enter a message before sending.");
+      return;
+    }
+
+    if (isLoading) {
       return;
     }
 
@@ -229,6 +247,7 @@ function App() {
         }),
       });
 
+      setConversationId(data.conversationId);
       setMessages((currentMessages) => [
         ...currentMessages,
         {
@@ -240,7 +259,7 @@ function App() {
           intent: data.intent?.label,
         },
       ]);
-      await refreshConversations(conversationId);
+      await refreshConversations(data.conversationId);
     } catch (requestError) {
       setFailedMessage(trimmedMessage);
       setError(

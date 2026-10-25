@@ -32,16 +32,20 @@ async function startBackend() {
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
+    backgroundColor: "#eef2ff",
     width: 1200,
     height: 800,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // Persist cookies (including iea_session) to disk so chat history
+      // survives application restarts.
+      partition: "persist:main",
     },
   });
 
-  await mainWindow.loadFile(path.join(app.getAppPath(), "dist", "index.html"));
+  await mainWindow.loadURL(`http://127.0.0.1:${backendPort}`);
 }
 
 async function showStartupError(error) {

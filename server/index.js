@@ -47,7 +47,7 @@ const aiRequestTimeoutMs = Math.min(Number(process.env.AI_TIMEOUT_MS) || 4000, 4
 const otpLifetimeMs = 10 * 60 * 1000;
 const otpResendCooldownMs = 60 * 1000;
 const otpMaxAttempts = 5;
-const sessionLifetimeMs = 24 * 60 * 60 * 1000;
+const sessionLifetimeMs = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 const TEXT_DOCUMENT_TYPES = new Map([
   ["text/plain", "txt"],

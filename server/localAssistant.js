@@ -104,7 +104,7 @@ function rankSentences(text, question, limit) {
     (sentence) => isInformative(sentence) && !isNoise(sentence),
   );
 
-  return sentences
+  const ranked = sentences
     .map((sentence, position) => {
       const terms = tokenize(sentence).map(stem);
       const overlap = terms.filter((term) => queryTerms.has(term)).length;
@@ -116,7 +116,10 @@ function rankSentences(text, question, limit) {
       };
     })
     .sort((left, right) => right.score - left.score || left.position - right.position)
-    .slice(0, limit)
+    .slice(0, limit);
+
+  const relevant = ranked.filter(({ score }) => score > 0);
+  return (relevant.length > 0 ? relevant : ranked)
     .sort((left, right) => left.position - right.position)
     .map(({ sentence }) => sentence);
 }
@@ -165,7 +168,7 @@ function knowledgeAnswer(question, intent) {
       "",
       followUp,
       "",
-      `Source: ${sources.join(", ")} (demonstration data, not official policy).`,
+      `Source: ${sources.join(", ")}.`,
     ].join("\n"),
     sources,
     confidence: Number(Math.min(1, primary.score / 6).toFixed(2)),

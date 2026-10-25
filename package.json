@@ -13,7 +13,8 @@
     "test": "NODE_ENV=test node --test server/assistant.test.js server/index.test.js server/nlp.test.js",
     "load-test": "node scripts/load-test.js",
     "desktop:package": "bash scripts/package-dmg.sh",
-    "demo:handbook": "node scripts/generate-demo-handbook.mjs"
+    "demo:handbook": "node scripts/generate-demo-handbook.mjs",
+    "electron": "node server/index.js & sleep 2 && ./node_modules/.bin/electron desktop/main.cjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

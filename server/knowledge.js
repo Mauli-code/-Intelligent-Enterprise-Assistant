@@ -3,8 +3,7 @@ import { searchKnowledge } from "./retrieval.js";
 // Prompt assembly for the optional LLM path. Retrieval itself lives in
 // `retrieval.js` (BM25); this module only decides what text the model sees.
 
-const DEMONSTRATION_NOTICE =
-  "The documents below are demonstration data, not official GAIL policy.";
+
 
 /**
  * Rank demonstration knowledge for a question.
@@ -41,8 +40,8 @@ export function buildPrompt({ question, document = null, history = [] }) {
     .join("\n\n");
 
   const knowledgeBlock = sourceText
-    ? `${DEMONSTRATION_NOTICE} Use them when relevant. If they do not answer the question, say so and recommend the official internal source. Do not invent company rules.\n\n${sourceText}`
-    : "The demonstration knowledge base has no relevant source for this question.";
+    ? `Use the sources below to answer the employee's question. If they do not cover the question, say so and recommend they contact HR or their manager. Do not invent company rules.\n\n${sourceText}`
+    : "The knowledge base has no relevant source for this question. Advise the employee to contact HR directly.";
 
   const documentBlock = document
     ? `UPLOADED DOCUMENT (${document.filename}):\n${String(document.text).slice(0, 100000)}\n\nUse the uploaded document to answer follow-up questions when it is relevant.`
@@ -52,7 +51,7 @@ export function buildPrompt({ question, document = null, history = [] }) {
     Boolean,
   );
 
-  return `${sections.join("\n\n")}\n\nAnswer as a concise, professional workplace assistant. Use short paragraphs or bullet points.\n\nEMPLOYEE QUESTION:\n${question}`;
+  return `${sections.join("\n\n")}\n\nAnswer the CURRENT EMPLOYEE QUESTION below, not an earlier question. Do not repeat an earlier answer unless it directly answers the current question. Use only the source details that are relevant to the current question; if the sources do not answer it, say so clearly. Never invent dates, contacts, procedures, balances, or policy. Use short paragraphs or bullet points.\n\nCURRENT EMPLOYEE QUESTION:\n${question}`;
 }
 
 /** Backwards-compatible helper retained for existing callers and tests. */
