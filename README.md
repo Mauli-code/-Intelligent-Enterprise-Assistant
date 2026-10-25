@@ -109,8 +109,9 @@ endpoint is currently at `http://localhost:3001/api/documents`.
 
 The conversation database is created automatically at
 `server/data/assistant.db`. This local file is ignored by Git. It contains
-conversation titles and messages for this local prototype and has no
-authentication or multi-user access control.
+conversation titles and messages for this local prototype. Conversations are
+filtered by the verified user's session on every history, chat, and document
+route.
 
 Conversations now belong to the verified email user. OTP codes are stored only
 as hashes, expire after 10 minutes, allow at most five attempts, and have a
@@ -170,12 +171,14 @@ Expected response:
 {"status":"ok"}
 ```
 
-Send a chat message:
+Send a chat message after authenticating and include the session cookie and,
+when using an existing conversation, its ID:
 
 ```bash
 curl -X POST http://localhost:3001/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message":"Explain enterprise AI in one sentence."}'
+  -H "Cookie: iea_session=YOUR_SESSION_COOKIE" \
+  -d '{"conversationId":"YOUR_CONVERSATION_ID","message":"Explain enterprise AI in one sentence."}'
 ```
 
 Upload a PDF for extraction and summarization from an existing conversation:
@@ -217,9 +220,11 @@ successful and failed requests, average latency, p95 latency, and requests
 over five seconds. It does not call Gemini, so it measures local API and
 database behavior rather than external provider latency.
 
-The test suite covers health checks, chat validation, missing Gemini
+The test suite covers health checks, OTP delivery and verification, protected
+routes, session invalidation, user isolation, chat validation, missing Gemini
 configuration, malformed and oversized JSON, PDF type/signature/size checks,
-conversation creation and deletion, missing upload fields, and unknown routes.
+conversation creation and deletion, missing upload fields, environment-template
+safety, and unknown routes.
 
 The concurrency measurement is separate from the functional test suite:
 

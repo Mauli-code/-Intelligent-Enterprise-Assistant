@@ -255,7 +255,7 @@ function App() {
       <main className="app-shell">
         <section className="chat-card auth-card">
           <h1>Verify your email</h1>
-          <p>Development mode prints the OTP in the backend terminal.</p>
+          <p>Enter your email to receive a verification code.</p>
           <form onSubmit={isCodeSent ? verifyCode : requestCode}>
             <label htmlFor="auth-email">Email</label>
             <input id="auth-email" type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required />
