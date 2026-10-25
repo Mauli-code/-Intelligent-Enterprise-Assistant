@@ -12,7 +12,7 @@
     "build": "vite build",
     "test": "NODE_ENV=test node --test server/assistant.test.js server/index.test.js server/nlp.test.js",
     "load-test": "node scripts/load-test.js",
-    "desktop:package": "npm run build && electron-builder --mac dmg --arm64",
+    "desktop:package": "bash scripts/package-dmg.sh",
     "demo:handbook": "node scripts/generate-demo-handbook.mjs"
   },
   "dependencies": {
